@@ -1,0 +1,55 @@
+syntax = "proto3";
+
+package crocks.pb;
+
+service RPC {
+  // Basic Operations
+  rpc Get(Key) returns (Response) {}
+  rpc Put(KeyValue) returns (Response) {}
+  rpc Delete(Key) returns (Response) {}
+  rpc SingleDelete(Key) returns (Response) {}
+
+  // Implemented as an RPC but currently there is no way to define a merge
+  // operator, so it is not tested. It should work though.
+  rpc Merge(KeyValue) returns (Response) {}
+
+  // Batches
+  rpc BatchStreaming(stream BatchUpdate) returns (Response) {}
+  rpc BatchBuffered(BatchBuffer) returns (Response) {}
+  // BatchStreaming is slow and BatchBuffered suffers from the 4MB message
+  // limit. Solution: combine them into streaming buffered write batches. :)
+
+  // Wrapper around rocksdb::WriteBatch
+  rpc Batch(stream BatchBuffer) returns (Response) {}
+}
+
+message Key {
+  bytes key = 1;
+}
+
+message KeyValue {
+  bytes key = 1;
+  bytes value = 2;
+}
+
+message BatchUpdate {
+  enum Operation {
+    PUT = 0;
+    DELETE = 1;
+    SINGLE_DELETE = 2;
+    MERGE = 3;
+    CLEAR = 4;
+  }
+  Operation op = 1;
+  bytes key = 2;
+  bytes value = 3;
+}
+
+message BatchBuffer {
+  repeated BatchUpdate updates = 1;
+}
+
+message Response {
+  int32 status = 1;
+  bytes value = 2;  // Only used on Get()
+}

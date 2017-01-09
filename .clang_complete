@@ -1,0 +1,1 @@
+-std=c++11 -g -O2 -Wall -Iinclude -I. -pthread
