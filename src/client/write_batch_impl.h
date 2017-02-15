@@ -32,6 +32,10 @@ namespace crocks {
 
 class Cluster;
 
+// TODO: Make thresholds configurable
+const int kByteSizeThreshold1 = 64 * 1024;    // 64KB
+const int kByteSizeThreshold2 = 1024 * 1024;  // 1MB
+
 struct AsyncBatchCall {
   pb::BatchBuffer request;
   pb::Response response;
@@ -57,6 +61,7 @@ class WriteBatch::WriteBatchImpl {
  private:
   AsyncBatchCall* EnsureBatchCall(int idx);
   void QueueNext();
+  bool QueueAsyncNext();
   void StreamIfExceededThreshold(int idx);
   void Stream(int idx);
 

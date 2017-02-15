@@ -18,6 +18,9 @@
 #include "src/client/write_batch_impl.h"
 
 #include <assert.h>
+#include <stdlib.h>
+
+#include <chrono>
 
 #include <crocks/cluster.h>
 #include <crocks/status.h>
@@ -198,12 +201,47 @@ void WriteBatch::WriteBatchImpl::QueueNext() {
   static_cast<AsyncBatchCall*>(got_tag)->pending_requests--;
 }
 
+// Similar to QueueNext() but does not block and returns true if it processed a
+// call or false if the queue was empty.
+bool WriteBatch::WriteBatchImpl::QueueAsyncNext() {
+  void* got_tag;
+  bool ok = false;
+  // The deadline is normally something like
+  // std::chrono::system_clock::now() + std::chrono::milliseconds(10)
+  // Here we only pass now() so it will timeout immediately.
+  switch (cq_.AsyncNext(&got_tag, &ok, std::chrono::system_clock::now())) {
+    case grpc::CompletionQueue::GOT_EVENT:
+      assert(ok);
+      static_cast<AsyncBatchCall*>(got_tag)->pending_requests--;
+      return true;
+    case grpc::CompletionQueue::TIMEOUT:
+      return false;
+    // FIXME: When can a queue be shutting down and what should we do about it?
+    case grpc::CompletionQueue::SHUTDOWN:
+      exit(EXIT_FAILURE);
+  }
+  // Unreachable
+  return false;
+}
+
 void WriteBatch::WriteBatchImpl::StreamIfExceededThreshold(int idx) {
   AsyncBatchCall* call = calls_[idx];
-  if (call->byte_size <= kByteSizeThreshold)
+  if (call->byte_size <= kByteSizeThreshold1) {
+    // Below the low threshold. Do nothing.
     return;
-
-  Stream(idx);
+  } else if (call->byte_size <= kByteSizeThreshold2) {
+    // Above the low threshold. If there are pending requests even after
+    // checking the queue, continue and try again later, else send a buffer.
+    while (call->pending_requests > 0 && QueueAsyncNext())
+      ;
+    if (call->pending_requests == 0)
+      Stream(idx);
+  } else {
+    // Above the high threshold. We have no choice but to block.
+    while (call->pending_requests > 0)
+      QueueNext();
+    Stream(idx);
+  }
 }
 
 void WriteBatch::WriteBatchImpl::Stream(int idx) {
