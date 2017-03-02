@@ -23,7 +23,6 @@
 
 #include <crocks/status.h>
 #include "gen/crocks.grpc.pb.h"
-#include "src/client/write_batch_buffered.h"
 
 namespace crocks {
 
@@ -45,18 +44,7 @@ class Node {
   Status SingleDelete(const std::string& key);
   Status Merge(const std::string& key, const std::string& value);
 
-  // For write_batch_buffered
-  Status Write(const WriteBatchBuffered& batch);
-
-  // For write_batch_streaming
-  std::unique_ptr<grpc::ClientWriter<pb::BatchUpdate>> BatchStreamingWriter(
-      grpc::ClientContext* context, pb::Response* response);
-
-  // For sync_write_batch
-  std::unique_ptr<grpc::ClientWriter<pb::BatchBuffer>> BatchWriter(
-      grpc::ClientContext* context, pb::Response* response);
-
-  // For async write_batch
+  // For write_batch
   std::unique_ptr<grpc::ClientAsyncWriter<pb::BatchBuffer>> AsyncBatchWriter(
       grpc::ClientContext* context, pb::Response* response,
       grpc::CompletionQueue* cq, void* tag);

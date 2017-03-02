@@ -51,14 +51,6 @@ class Service final : public pb::RPC::Service {
   grpc::Status Merge(grpc::ServerContext* context, const pb::KeyValue* request,
                      pb::Response* response) override;
 
-  grpc::Status BatchStreaming(grpc::ServerContext* context,
-                              grpc::ServerReader<pb::BatchUpdate>* reader,
-                              pb::Response* response) override;
-
-  grpc::Status BatchBuffered(grpc::ServerContext* context,
-                             const pb::BatchBuffer* request,
-                             pb::Response* response) override;
-
   grpc::Status Batch(grpc::ServerContext* context,
                      grpc::ServerReader<pb::BatchBuffer>* reader,
                      pb::Response* response) override;

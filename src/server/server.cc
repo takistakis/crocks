@@ -85,35 +85,6 @@ grpc::Status Service::Merge(grpc::ServerContext* context,
   return grpc::Status::OK;
 }
 
-grpc::Status Service::BatchStreaming(
-    grpc::ServerContext* context, grpc::ServerReader<pb::BatchUpdate>* reader,
-    pb::Response* response) {
-  pb::BatchUpdate batch_update;
-  rocksdb::WriteBatch batch;
-
-  while (reader->Read(&batch_update))
-    ApplyBatchUpdate(&batch, batch_update);
-
-  rocksdb::Status s = db_->Write(rocksdb::WriteOptions(), &batch);
-  response->set_status(RocksdbStatusCodeToInt(s.code()));
-
-  return grpc::Status::OK;
-}
-
-grpc::Status Service::BatchBuffered(grpc::ServerContext* context,
-                                    const pb::BatchBuffer* request,
-                                    pb::Response* response) {
-  rocksdb::WriteBatch batch;
-
-  for (const pb::BatchUpdate& batch_update : request->updates())
-    ApplyBatchUpdate(&batch, batch_update);
-
-  rocksdb::Status s = db_->Write(rocksdb::WriteOptions(), &batch);
-  response->set_status(RocksdbStatusCodeToInt(s.code()));
-
-  return grpc::Status::OK;
-}
-
 grpc::Status Service::Batch(grpc::ServerContext* context,
                             grpc::ServerReader<pb::BatchBuffer>* reader,
                             pb::Response* response) {

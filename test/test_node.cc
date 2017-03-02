@@ -20,9 +20,6 @@
 
 #include <crocks/status.h>
 #include "src/client/node.h"
-#include "src/client/sync_write_batch.h"
-#include "src/client/write_batch_buffered.h"
-#include "src/client/write_batch_streaming.h"
 
 #include "util.h"
 
@@ -58,46 +55,6 @@ inline void TestMultiPut(crocks::Node* db) {
     db->Put("yo" + std::to_string(i), "yoyoyoyo" + std::to_string(i));
 }
 
-inline void TestStreamingBatch(crocks::Node* db) {
-  crocks::WriteBatchStreaming batch(db);
-
-  std::cout << "Starting 75000 streaming batch puts" << std::endl;
-  for (int i = 0; i < 75000; i++)
-    batch.Put("yo" + std::to_string(i), "yoyoyoyo" + std::to_string(i));
-  EnsureRpc(batch.Write());
-}
-
-inline void TestSingleBatch(crocks::Node* db) {
-  crocks::WriteBatchBuffered batch;
-
-  std::cout << "Starting ~750.000 buffered batch puts (three 4MB messages)"
-            << std::endl;
-  for (int j = 0; j < 3; j++) {
-    for (int i = 0; i < 4 * 64 * 1024; i++)
-      batch.Put("yo", "yoyoyoyo");
-    EnsureRpc(db->Write(batch));
-    batch.Clear();
-  }
-}
-
-inline void TestBatch(crocks::Node* db) {
-  crocks::SyncWriteBatch batch(db);
-
-  std::cout << "Starting 1.500.000 batch puts" << std::endl;
-  for (int i = 0; i < 1500000; i++)
-    batch.Put("yo" + std::to_string(i), "yoyoyoyo" + std::to_string(i));
-  EnsureRpc(batch.Write());
-}
-
-inline void TestBatchRandom(crocks::Node* db) {
-  crocks::SyncWriteBatch batch(db);
-
-  std::cout << "Starting 1.500.000 random batch puts" << std::endl;
-  for (int i = 0; i < 1500000; i++)
-    batch.Put(RandomKey(), RandomValue());
-  EnsureRpc(batch.Write());
-}
-
 int main() {
   RandomInit();
   crocks::Node* db = crocks::DBOpen("localhost:50051");
@@ -109,18 +66,6 @@ int main() {
   std::cout << std::endl;
 
   Measure(TestMultiPut, db);
-  std::cout << std::endl;
-
-  Measure(TestStreamingBatch, db);
-  std::cout << std::endl;
-
-  Measure(TestSingleBatch, db);
-  std::cout << std::endl;
-
-  Measure(TestBatch, db);
-  std::cout << std::endl;
-
-  Measure(TestBatchRandom, db);
   std::cout << std::endl;
 
   delete db;

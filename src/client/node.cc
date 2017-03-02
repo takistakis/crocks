@@ -78,29 +78,7 @@ Status Node::Merge(const std::string& key, const std::string& value) {
   return Status(status, response.status());
 }
 
-// For write_batch_buffered
-Status Node::Write(const WriteBatchBuffered& batch) {
-  grpc::ClientContext context;
-  pb::BatchBuffer request = batch.request();
-  pb::Response response;
-
-  grpc::Status status = stub_->BatchBuffered(&context, request, &response);
-  return Status(status, response.status());
-}
-
-// For write_batch_streaming
-std::unique_ptr<grpc::ClientWriter<pb::BatchUpdate>> Node::BatchStreamingWriter(
-    grpc::ClientContext* context, pb::Response* response) {
-  return stub_->BatchStreaming(context, response);
-}
-
-// For sync_write_batch
-std::unique_ptr<grpc::ClientWriter<pb::BatchBuffer>> Node::BatchWriter(
-    grpc::ClientContext* context, pb::Response* response) {
-  return stub_->Batch(context, response);
-}
-
-// For async write_batch
+// For write_batch
 std::unique_ptr<grpc::ClientAsyncWriter<pb::BatchBuffer>>
 Node::AsyncBatchWriter(grpc::ClientContext* context, pb::Response* response,
                        grpc::CompletionQueue* cq, void* tag) {

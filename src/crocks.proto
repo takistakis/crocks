@@ -13,12 +13,6 @@ service RPC {
   // operator, so it is not tested. It should work though.
   rpc Merge(KeyValue) returns (Response) {}
 
-  // Batches
-  rpc BatchStreaming(stream BatchUpdate) returns (Response) {}
-  rpc BatchBuffered(BatchBuffer) returns (Response) {}
-  // BatchStreaming is slow and BatchBuffered suffers from the 4MB message
-  // limit. Solution: combine them into streaming buffered write batches. :)
-
   // Wrapper around rocksdb::WriteBatch
   rpc Batch(stream BatchBuffer) returns (Response) {}
 }
