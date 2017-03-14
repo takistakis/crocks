@@ -37,7 +37,7 @@ crocks: $(SERVER_OBJECTS)
 	@$(CXX) $^ $(LDFLAGS) -o $@
 
 .PHONY: test
-test: test_node test_cluster test_batch
+test: test_node test_cluster test_batch test_iterator
 test_%: $(CLIENT_OBJECTS) $(OBJDIR)/test/test_%.o
 	@echo "Linking     $@"
 	@$(CXX) $^ $(LDFLAGS) -o $@

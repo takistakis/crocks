@@ -55,6 +55,11 @@ class Service final : public pb::RPC::Service {
                      grpc::ServerReader<pb::BatchBuffer>* reader,
                      pb::Response* response) override;
 
+  grpc::Status Iterator(
+      grpc::ServerContext* context,
+      grpc::ServerReaderWriter<pb::IteratorResponse, pb::IteratorRequest>*
+          stream) override;
+
  private:
   rocksdb::Options options_;
   rocksdb::DB* db_;

@@ -23,12 +23,15 @@
 
 namespace rocksdb {
 class WriteBatch;
+class Iterator;
 }
 
 namespace crocks {
 
 namespace pb {
 class BatchUpdate;
+class IteratorRequest;
+class IteratorResponse;
 }
 
 int RocksdbStatusCodeToInt(const rocksdb::Status::Code& status);
@@ -38,6 +41,10 @@ void EnsureRocksdb(const std::string& what, const rocksdb::Status& status);
 
 void ApplyBatchUpdate(rocksdb::WriteBatch* batch,
                       const pb::BatchUpdate& batch_update);
+
+void ApplyIteratorRequest(rocksdb::Iterator* iterator,
+                          const pb::IteratorRequest& request,
+                          pb::IteratorResponse* response);
 
 rocksdb::Options DefaultRocksdbOptions();
 

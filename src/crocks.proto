@@ -15,6 +15,9 @@ service RPC {
 
   // Wrapper around rocksdb::WriteBatch
   rpc Batch(stream BatchBuffer) returns (Response) {}
+
+  // Wrapper around rocksdb::Iterator
+  rpc Iterator(stream IteratorRequest) returns (stream IteratorResponse) {}
 }
 
 message Key {
@@ -46,4 +49,23 @@ message BatchBuffer {
 message Response {
   int32 status = 1;
   bytes value = 2;  // Only used on Get()
+}
+
+message IteratorRequest {
+  enum Operation {
+    SEEK_TO_FIRST = 0;
+    SEEK_TO_LAST = 1;
+    SEEK = 2;
+    SEEK_FOR_PREV = 3;
+    NEXT = 4;
+    PREV = 5;
+  }
+  Operation op = 1;
+  bytes target = 2;  // Set only for SEEK and SEEK_FOR_PREV
+}
+
+message IteratorResponse {
+  repeated KeyValue kvs = 1;
+  bool done = 2;
+  int32 status = 3;
 }

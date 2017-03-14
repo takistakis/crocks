@@ -49,6 +49,12 @@ class Node {
       grpc::ClientContext* context, pb::Response* response,
       grpc::CompletionQueue* cq, void* tag);
 
+  // For iterator
+  std::unique_ptr<
+      grpc::ClientAsyncReaderWriter<pb::IteratorRequest, pb::IteratorResponse>>
+  AsyncIteratorStream(grpc::ClientContext* context, grpc::CompletionQueue* cq,
+                      void* tag);
+
  private:
   std::unique_ptr<pb::RPC::Stub> stub_;
 };

@@ -105,4 +105,22 @@ grpc::Status Service::Batch(grpc::ServerContext* context,
   return grpc::Status::OK;
 }
 
+grpc::Status Service::Iterator(
+    grpc::ServerContext* context,
+    grpc::ServerReaderWriter<pb::IteratorResponse, pb::IteratorRequest>*
+        stream) {
+  pb::IteratorRequest request;
+  pb::IteratorResponse response;
+  // https://github.com/facebook/rocksdb/wiki/Basic-Operations#iteration
+  rocksdb::Iterator* it = db_->NewIterator(rocksdb::ReadOptions());
+  while (stream->Read(&request)) {
+    response.Clear();
+    ApplyIteratorRequest(it, request, &response);
+    stream->Write(response);
+  }
+  delete it;
+
+  return grpc::Status::OK;
+}
+
 }  // namespace crocks

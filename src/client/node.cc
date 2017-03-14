@@ -85,6 +85,14 @@ Node::AsyncBatchWriter(grpc::ClientContext* context, pb::Response* response,
   return stub_->AsyncBatch(context, response, cq, tag);
 }
 
+// For iterator
+std::unique_ptr<
+    grpc::ClientAsyncReaderWriter<pb::IteratorRequest, pb::IteratorResponse>>
+Node::AsyncIteratorStream(grpc::ClientContext* context,
+                          grpc::CompletionQueue* cq, void* tag) {
+  return stub_->AsyncIterator(context, cq, tag);
+}
+
 Node* DBOpen(const std::string& address) {
   return new Node(
       grpc::CreateChannel(address, grpc::InsecureChannelCredentials()));

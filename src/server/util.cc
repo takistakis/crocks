@@ -23,6 +23,7 @@
 #include <iostream>
 #include <string>
 
+#include <rocksdb/iterator.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/write_batch.h>
 
@@ -62,6 +63,65 @@ void ApplyBatchUpdate(rocksdb::WriteBatch* batch,
       break;
     case pb::BatchUpdate::CLEAR:
       batch->Clear();
+      break;
+    default:
+      assert(false);
+  }
+}
+
+const int kIteratorBatchSize = 10;
+
+void MakeNextBatch(rocksdb::Iterator* it, pb::IteratorResponse* response) {
+  for (int i = 0; i < kIteratorBatchSize && it->Valid(); i++) {
+    pb::KeyValue* kv = response->add_kvs();
+    kv->set_key(it->key().ToString());
+    kv->set_value(it->value().ToString());
+    it->Next();
+  }
+  response->set_done(it->Valid() ? false : true);
+  response->set_status(RocksdbStatusCodeToInt(it->status().code()));
+}
+
+void MakePrevBatch(rocksdb::Iterator* it, pb::IteratorResponse* response) {
+  for (int i = 0; i < kIteratorBatchSize && it->Valid(); i++) {
+    pb::KeyValue* kv = response->add_kvs();
+    kv->set_key(it->key().ToString());
+    kv->set_value(it->value().ToString());
+    it->Prev();
+  }
+  response->set_done(it->Valid() ? false : true);
+  response->set_status(RocksdbStatusCodeToInt(it->status().code()));
+}
+
+// Once we have a seek request, guess which way the client will
+// iterate and send a bunch of key-value pairs and whatever
+// else is needed. When the iterator becomes invalid, iteration
+// stops and the done field of the response is set to true.
+void ApplyIteratorRequest(rocksdb::Iterator* it,
+                          const pb::IteratorRequest& request,
+                          pb::IteratorResponse* response) {
+  switch (request.op()) {
+    case pb::IteratorRequest::SEEK_TO_FIRST:
+      it->SeekToFirst();
+      MakeNextBatch(it, response);
+      break;
+    case pb::IteratorRequest::SEEK_TO_LAST:
+      it->SeekToLast();
+      MakePrevBatch(it, response);
+      break;
+    case pb::IteratorRequest::SEEK:
+      it->Seek(request.target());
+      MakeNextBatch(it, response);
+      break;
+    case pb::IteratorRequest::SEEK_FOR_PREV:
+      it->SeekForPrev(request.target());
+      MakePrevBatch(it, response);
+      break;
+    case pb::IteratorRequest::NEXT:
+      MakeNextBatch(it, response);
+      break;
+    case pb::IteratorRequest::PREV:
+      MakePrevBatch(it, response);
       break;
     default:
       assert(false);
