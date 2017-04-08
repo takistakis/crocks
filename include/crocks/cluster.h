@@ -19,7 +19,6 @@
 #define CROCKS_CLUSTER_H
 
 #include <string>
-#include <vector>
 
 #include <crocks/status.h>
 
@@ -29,7 +28,7 @@ class Node;
 
 class Cluster {
  public:
-  explicit Cluster(std::vector<std::string> addresses);
+  explicit Cluster(const std::string& address);
   ~Cluster();
 
   Status Get(const std::string& key, std::string* value);
@@ -38,6 +37,7 @@ class Cluster {
   Status SingleDelete(const std::string& key);
   Status Merge(const std::string& key, const std::string& value);
 
+  int ShardForKey(const std::string& key);
   int IndexForKey(const std::string& key);
   Node* NodeForKey(const std::string& key);
   Node* NodeByIndex(int idx);
@@ -52,7 +52,7 @@ class Cluster {
   void operator=(const Cluster&) = delete;
 };
 
-Cluster* DBOpen(std::vector<std::string> addresses);
+Cluster* DBOpen(const std::string& address);
 
 }  // namespace crocks
 

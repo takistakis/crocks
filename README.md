@@ -2,6 +2,11 @@
 
 A fast, sharded key-value store, based on [RocksDB].
 
+## Requirements
+
+The server requires RocksDB, and both the server and client require
+[etcd] for cluster membership discovery and coordination.
+
 ## Quickstart
 
 Compile and install the server and shared library for the client:
@@ -11,7 +16,13 @@ $ make crocks shared
 $ [sudo] make install
 ```
 
-Start a server:
+Start an etcd server, listening to the default port (2379):
+
+```
+$ etcd
+```
+
+Start a crocks server:
 
 ```
 $ crocks --port 50051
@@ -31,8 +42,7 @@ Compile and run this program:
 using namespace crocks;
 
 int main() {
-  std::vector<std::string> addresses = {"localhost:50051"};
-  Cluster* db = DBOpen(addresses);
+  Cluster* db = DBOpen("localhost:2379");
   std::string value;
 
   EnsureRpc(db->Put("key", "value"));
@@ -61,3 +71,4 @@ not found
 Licensed under GPLv3 or any later version.
 
 [RocksDB]: http://www.rocksdb.org
+[etcd]: https://coreos.com/etcd

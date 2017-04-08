@@ -26,14 +26,16 @@
 
 #include "gen/crocks.grpc.pb.h"
 #include "gen/crocks.pb.h"
+#include "src/common/info.h"
 
 namespace crocks {
 
 class Service final : public pb::RPC::Service {
  public:
-  Service(const std::string& dbpath);
-  Service(rocksdb::Options options, const std::string& dbpath);
+  Service(const std::string& address, const std::string& dbpath);
   ~Service();
+
+  void Init(const std::string& address);
 
   grpc::Status Get(grpc::ServerContext* context, const pb::Key* request,
                    pb::Response* response) override;
@@ -61,6 +63,7 @@ class Service final : public pb::RPC::Service {
           stream) override;
 
  private:
+  Info info_;
   rocksdb::Options options_;
   rocksdb::DB* db_;
   std::string dbpath_;

@@ -19,6 +19,7 @@
 
 #include <iostream>
 
+#include <rocksdb/iterator.h>
 #include <rocksdb/status.h>
 #include <rocksdb/write_batch.h>
 
@@ -26,14 +27,12 @@
 
 namespace crocks {
 
-Service::Service(const std::string& dbpath)
-    : options_(DefaultRocksdbOptions()), dbpath_(dbpath) {
-  rocksdb::Status s = rocksdb::DB::Open(options_, dbpath_, &db_);
-  EnsureRocksdb("Open", s);
-};
+// TODO: Cluster info gets never updated. We should
+// watch the info, update it if changed, and ensure that
+// keys in requests really belong to the requested node.
 
-Service::Service(rocksdb::Options options, const std::string& dbpath)
-    : options_(options), dbpath_(dbpath) {
+Service::Service(const std::string& address, const std::string& dbpath)
+    : info_(address), options_(DefaultRocksdbOptions()), dbpath_(dbpath) {
   rocksdb::Status s = rocksdb::DB::Open(options_, dbpath_, &db_);
   EnsureRocksdb("Open", s);
 };
@@ -42,6 +41,10 @@ Service::~Service() {
   rocksdb::DestroyDB(dbpath_, options_);
   delete db_;
 };
+
+void Service::Init(const std::string& address) {
+  info_.Add(address);
+}
 
 grpc::Status Service::Get(grpc::ServerContext* context, const pb::Key* request,
                           pb::Response* response) {

@@ -21,8 +21,9 @@
 
 namespace crocks {
 
-Node::Node(std::shared_ptr<grpc::Channel> channel)
-    : stub_(pb::RPC::NewStub(channel)) {}
+Node::Node(const std::string& address)
+    : stub_(pb::RPC::NewStub(
+          grpc::CreateChannel(address, grpc::InsecureChannelCredentials()))) {}
 
 Status Node::Get(const std::string& key, std::string* value) {
   grpc::ClientContext context;
@@ -91,11 +92,6 @@ std::unique_ptr<
 Node::AsyncIteratorStream(grpc::ClientContext* context,
                           grpc::CompletionQueue* cq, void* tag) {
   return stub_->AsyncIterator(context, cq, tag);
-}
-
-Node* DBOpen(const std::string& address) {
-  return new Node(
-      grpc::CreateChannel(address, grpc::InsecureChannelCredentials()));
 }
 
 }  // namespace crocks

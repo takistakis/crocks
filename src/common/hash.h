@@ -7,8 +7,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file. See the AUTHORS file for names of contributors.
 
-#ifndef CROCKS_CLIENT_HASH_H
-#define CROCKS_CLIENT_HASH_H
+#ifndef CROCKS_COMMON_HASH_H
+#define CROCKS_COMMON_HASH_H
 
 #include <stddef.h>
 #include <stdint.h>
@@ -25,4 +25,4 @@ inline uint32_t Hash(const std::string& string) {
 
 }  // namespace crocks
 
-#endif  // CROCKS_CLIENT_HASH_H
+#endif  // CROCKS_COMMON_HASH_H

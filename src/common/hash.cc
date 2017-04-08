@@ -9,7 +9,7 @@
 
 // Straight outta RocksDB (util/hash.cc)
 
-#include "src/client/hash.h"
+#include "src/common/hash.h"
 
 // NOTE: endian.h is not standard
 #include <endian.h>

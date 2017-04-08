@@ -12,9 +12,17 @@ SRCDIR = src
 GENDIR = gen
 OBJDIR = build
 HDRDIR = include
+PBDIR = $(SRCDIR)/proto
 
 PROTO_OBJECTS := $(OBJDIR)/crocks.pb.o \
-	$(OBJDIR)/crocks.grpc.pb.o
+	$(OBJDIR)/crocks.grpc.pb.o \
+	$(OBJDIR)/etcd.pb.o \
+	$(OBJDIR)/etcd.grpc.pb.o \
+	$(OBJDIR)/info.pb.o \
+
+COMMON_SOURCES := $(wildcard $(SRCDIR)/common/*.cc)
+COMMON_OBJECTS := $(PROTO_OBJECTS) \
+	$(COMMON_SOURCES:$(SRCDIR)/%.cc=$(OBJDIR)/%.o)
 
 COMMON_SOURCES := $(wildcard $(SRCDIR)/common/*.cc)
 COMMON_OBJECTS := $(PROTO_OBJECTS) \
@@ -44,17 +52,17 @@ test_%: $(CLIENT_OBJECTS) $(OBJDIR)/test/test_%.o
 
 # Protobuf and gRPC C++ code generation
 .PRECIOUS: $(GENDIR)/%.grpc.pb.cc
-$(GENDIR)/%.grpc.pb.cc: $(SRCDIR)/%.proto
+$(GENDIR)/%.grpc.pb.cc: $(PBDIR)/%.proto
 	@mkdir -p $(@D)
 	@echo "Generating  $@"
-	@$(PROTOC) -I $(SRCDIR) --grpc_out=$(GENDIR) \
+	@$(PROTOC) -I $(PBDIR) --grpc_out=$(GENDIR) \
 		--plugin=protoc-gen-grpc=$(GRPC_CPP_PLUGIN_PATH) $<
 
 .PRECIOUS: $(GENDIR)/%.pb.cc
-$(GENDIR)/%.pb.cc: $(SRCDIR)/%.proto
+$(GENDIR)/%.pb.cc: $(PBDIR)/%.proto
 	@mkdir -p $(@D)
 	@echo "Generating  $@"
-	@$(PROTOC) -I $(SRCDIR) --cpp_out=$(GENDIR) $<
+	@$(PROTOC) -I $(PBDIR) --cpp_out=$(GENDIR) $<
 
 vpath %.cc $(SRCDIR)
 

@@ -19,7 +19,6 @@
 
 #include <iostream>
 #include <string>
-#include <vector>
 
 #include <crocks/cluster.h>
 #include <crocks/status.h>
@@ -60,9 +59,7 @@ inline void TestRandom(crocks::Cluster* db) {
 
 int main() {
   RandomInit();
-  std::vector<std::string> addresses = {"localhost:50051", "localhost:50052",
-                                        "localhost:50053", "localhost:50054"};
-  crocks::Cluster* db = crocks::DBOpen(addresses);
+  crocks::Cluster* db = crocks::DBOpen("localhost:2379");
 
   Measure(TestSingle, db);
   std::cout << std::endl;

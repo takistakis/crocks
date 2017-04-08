@@ -17,7 +17,6 @@
 
 #include <iostream>
 #include <string>
-#include <vector>
 
 #include <crocks/cluster.h>
 #include <crocks/status.h>
@@ -49,8 +48,7 @@ inline void TestDelete(crocks::Cluster* db, const std::string& key) {
 }
 
 int main() {
-  std::vector<std::string> addresses = {"localhost:50051", "localhost:50052"};
-  crocks::Cluster* db = crocks::DBOpen(addresses);
+  crocks::Cluster* db = crocks::DBOpen("localhost:2379");
 
   TestPut(db, "asdf", "asdf");
   TestGet(db, "asdf");

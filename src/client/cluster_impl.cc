@@ -17,15 +17,12 @@
 
 #include "src/client/cluster_impl.h"
 
-#include <grpc++/grpc++.h>
-
-#include "src/client/hash.h"
 #include "src/client/node.h"
 
 namespace crocks {
 
-Cluster::Cluster(std::vector<std::string> addresses)
-    : impl_(new ClusterImpl(addresses)) {}
+Cluster::Cluster(const std::string& address)
+    : impl_(new ClusterImpl(address)) {}
 
 Cluster::~Cluster() {
   delete impl_;
@@ -51,6 +48,10 @@ Status Cluster::Merge(const std::string& key, const std::string& value) {
   return impl_->Merge(key, value);
 }
 
+int Cluster::ShardForKey(const std::string& key) {
+  return impl_->ShardForKey(key);
+}
+
 int Cluster::IndexForKey(const std::string& key) {
   return impl_->IndexForKey(key);
 }
@@ -67,18 +68,15 @@ int Cluster::num_nodes() const {
   return impl_->num_nodes();
 }
 
-Cluster* DBOpen(std::vector<std::string> addresses) {
-  return new Cluster(addresses);
+Cluster* DBOpen(const std::string& address) {
+  return new Cluster(address);
 }
 
 // Cluster implementation
-Cluster::ClusterImpl::ClusterImpl(std::vector<std::string> addresses)
-    : size_(addresses.size()) {
-  for (const std::string& address : addresses) {
-    Node* node = new Node(
-        grpc::CreateChannel(address, grpc::InsecureChannelCredentials()));
-    nodes_.push_back(node);
-  }
+Cluster::ClusterImpl::ClusterImpl(const std::string& address) : info_(address) {
+  info_.Get();
+  for (const std::string& address : info_.Addresses())
+    nodes_.push_back(new Node(address));
 }
 
 Cluster::ClusterImpl::~ClusterImpl() {
@@ -108,12 +106,16 @@ Status Cluster::ClusterImpl::Merge(const std::string& key,
   return NodeForKey(key)->Merge(key, value);
 }
 
+int Cluster::ClusterImpl::ShardForKey(const std::string& key) {
+  return info_.ShardForKey(key);
+}
+
 int Cluster::ClusterImpl::IndexForKey(const std::string& key) {
-  return Hash(key) % size_;
+  return info_.IndexForKey(key);
 }
 
 Node* Cluster::ClusterImpl::NodeForKey(const std::string& key) {
-  int idx = Hash(key) % size_;
+  int idx = info_.IndexForKey(key);
   return nodes_[idx];
 }
 

@@ -23,6 +23,7 @@
 
 #include <crocks/cluster.h>
 #include <crocks/status.h>
+#include "src/common/info.h"
 
 namespace crocks {
 
@@ -30,7 +31,7 @@ class Node;
 
 class Cluster::ClusterImpl {
  public:
-  ClusterImpl(std::vector<std::string> addresses);
+  ClusterImpl(const std::string& address);
   ~ClusterImpl();
 
   Status Get(const std::string& key, std::string* value);
@@ -39,16 +40,17 @@ class Cluster::ClusterImpl {
   Status SingleDelete(const std::string& key);
   Status Merge(const std::string& key, const std::string& value);
 
+  int ShardForKey(const std::string& key);
   int IndexForKey(const std::string& key);
   Node* NodeForKey(const std::string& key);
   Node* NodeByIndex(int idx);
 
   int num_nodes() const {
-    return size_;
+    return info_.num_nodes();
   }
 
  private:
-  int size_;
+  Info info_;
   std::vector<Node*> nodes_;
 };
 

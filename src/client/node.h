@@ -36,7 +36,7 @@ const int kByteSizeThreshold = 512 * 1024;  // 512KB
 
 class Node {
  public:
-  Node(std::shared_ptr<grpc::Channel> channel);
+  Node(const std::string& address);
 
   Status Get(const std::string& key, std::string* value);
   Status Put(const std::string& key, const std::string& value);
@@ -58,8 +58,6 @@ class Node {
  private:
   std::unique_ptr<pb::RPC::Stub> stub_;
 };
-
-Node* DBOpen(const std::string& address);
 
 }  // namespace crocks
 
