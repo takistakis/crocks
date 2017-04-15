@@ -37,10 +37,14 @@ CLIENT_OBJECTS := $(PROTO_OBJECTS) $(COMMON_OBJECTS) \
 	$(CLIENT_SOURCES:$(SRCDIR)/%.cc=$(OBJDIR)/%.o)
 
 .PHONY: all
-all: crocks
+all: crocks crocksctl
 
 crocks: LDFLAGS += -lrocksdb
 crocks: $(SERVER_OBJECTS)
+	@echo "Linking     $@"
+	@$(CXX) $^ $(LDFLAGS) -o $@
+
+crocksctl: $(PROTO_OBJECTS) $(CLIENT_OBJECTS) $(OBJDIR)/crocksctl/crocksctl.o
 	@echo "Linking     $@"
 	@$(CXX) $^ $(LDFLAGS) -o $@
 
@@ -116,12 +120,17 @@ libcrocks.a: $(CLIENT_OBJECTS)
 PREFIX ?= /usr/local
 
 .PHONY: install
-install: install-crocks install-shared
+install: install-crocks install-crocksctl install-shared
 
 .PHONY: install-crocks
 install-crocks: crocks
 	@echo "Installing  $<"
 	@install -s -m 755 crocks $(PREFIX)/bin
+
+.PHONY: install-crocksctl
+install-crocksctl: crocksctl
+	@echo "Installing  $<"
+	@install -s -m 755 crocksctl $(PREFIX)/bin
 
 .PHONY: install-headers
 install-headers:
@@ -144,10 +153,11 @@ install-static: libcrocks.a install-headers
 .PHONY: uninstall
 uninstall:
 	rm -rf $(PREFIX)/bin/crocks \
+		$(PREFIX)/bin/crocksctl \
 		$(PREFIX)/lib/libcrocks.so \
 		$(PREFIX)/lib/libcrocks.a \
 		$(PREFIX)/include/crocks
 
 .PHONY: clean
 clean:
-	rm -rf gen build crocks libcrocks.so libcrocks.a test_*
+	rm -rf gen build crocks crocksctl libcrocks.so libcrocks.a test_*

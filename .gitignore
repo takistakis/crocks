@@ -1,6 +1,7 @@
 /gen/
 /build/
 /crocks
+/crocksctl
 /libcrocks.so
 /libcrocks.a
 /test_*
