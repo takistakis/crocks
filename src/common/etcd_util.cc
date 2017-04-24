@@ -48,4 +48,28 @@ void AddSuccessPut(const std::string& key, const std::string& value,
   request_op->set_allocated_request_put(put_request);
 }
 
+void WatchKeyRequest(const std::string& key,
+                     etcdserverpb::WatchRequest* request) {
+  etcdserverpb::WatchCreateRequest* create_request;
+  create_request = new etcdserverpb::WatchCreateRequest;
+  create_request->set_key(key);
+  request->set_allocated_create_request(create_request);
+}
+
+void WatchKeyRequest(const std::string& key, int start_revision,
+                     etcdserverpb::WatchRequest* request) {
+  etcdserverpb::WatchCreateRequest* create_request;
+  create_request = new etcdserverpb::WatchCreateRequest;
+  create_request->set_key(key);
+  create_request->set_start_revision(start_revision);
+  request->set_allocated_create_request(create_request);
+}
+
+void WatchCancelRequest(int id, etcdserverpb::WatchRequest* request) {
+  etcdserverpb::WatchCancelRequest* cancel_request;
+  cancel_request = new etcdserverpb::WatchCancelRequest;
+  cancel_request->set_watch_id(id);
+  request->set_allocated_cancel_request(cancel_request);
+}
+
 }  // namespace crocks

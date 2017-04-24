@@ -17,6 +17,8 @@
 
 #include "src/common/info.h"
 
+#include <assert.h>
+
 #include <algorithm>
 #include <iostream>
 #include <sstream>
@@ -61,6 +63,8 @@ std::string ListToString(const T& list) {
   return stream.str();
 }
 
+Info::Info(const std::string& address) : etcd_(address) {}
+
 void Info::Get() {
   std::string info;
   etcd_.Get(kInfoKey, &info);
@@ -84,6 +88,7 @@ void Info::Add(const std::string& address) {
   id_ = num_nodes() - 1;
 }
 
+// TODO: Ensure thread-safety once this starts getting used
 void Info::Remove(const std::string& address) {
   // Remove the node from the list
   for (int i = 0; i < num_nodes(); i++) {
@@ -127,6 +132,19 @@ void Info::Print() {
 }
 
 // private
+std::string Info::Serialize() const {
+  std::string str;
+  bool ok = info_.SerializeToString(&str);
+  assert(ok);
+  return str;
+}
+
+void Info::Parse(const std::string& str) {
+  bool ok = info_.ParseFromString(str);
+  assert(ok);
+  UpdateMap();
+}
+
 void Info::AddWithNewShards(const std::string& address) {
   pb::NodeInfo* node = info_.add_nodes();
   node->set_address(address);
@@ -182,6 +200,27 @@ void Info::UpdateMap() {
       map_[shard] = i;
     i++;
   }
+}
+
+void* Info::Watch() {
+  std::string info;
+  void* call = etcd_.Watch(kInfoKey, &info);
+  Parse(info);
+  return call;
+}
+
+bool Info::WatchNext(void* call) {
+  std::string info;
+  bool canceled = etcd_.WatchNext(call, &info);
+  if (!canceled) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    Parse(info);
+  }
+  return canceled;
+}
+
+void Info::WatchCancel(void* call) {
+  etcd_.WatchCancel(call);
 }
 
 }  // namespace crocks

@@ -19,6 +19,7 @@
 #define CROCKS_SERVER_SERVER_H
 
 #include <string>
+#include <thread>
 
 #include <grpc++/grpc++.h>
 #include <rocksdb/db.h>
@@ -64,10 +65,14 @@ class Service final : public pb::RPC::Service {
 
  private:
   Info info_;
+  void* call_ = nullptr;
+  std::thread watcher_;
   rocksdb::Options options_;
   rocksdb::DB* db_;
   std::string dbpath_;
 };
+
+void WatchThread(Info* info, void* call);
 
 }  // namespace crocks
 

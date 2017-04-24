@@ -17,6 +17,8 @@
 
 #include "src/common/etcd_client.h"
 
+#include <assert.h>
+
 #include <crocks/status.h>
 #include "src/common/etcd_util.h"
 
@@ -34,9 +36,11 @@ int EtcdClient::Get(const std::string& key, std::string* value) {
   grpc::ClientContext context;
   request.set_key(key);
   EnsureRpc(kv_stub_->Range(&context, request, &response));
-  if (response.count() > 0)
-    *value = response.kvs()[0].value();
-  return response.count();
+  if (response.count() == 0)
+    return 0;
+  assert(response.count() == 1);
+  *value = response.kvs(0).value();
+  return response.kvs(0).mod_revision();
 }
 
 void EtcdClient::Put(const std::string& key, const std::string& value) {
@@ -87,6 +91,43 @@ bool EtcdClient::TxnPutIfKeyMissing(const std::string& key,
   AddSuccessPut(key, value, &request);
   EnsureRpc(kv_stub_->Txn(&context, request, &response));
   return response.succeeded();
+}
+
+void* EtcdClient::Watch(const std::string& key, std::string* value) {
+  WatchCall* call = new WatchCall;
+  call->stream = watch_stub_->Watch(&call->context);
+  // Make sure we have the latest update, and instruct etcd to
+  // send updates starting from the last revision exclusive, so
+  // that we don't miss any updates that took place in-between.
+  int revision = Get(key, value);
+  WatchKeyRequest(key, revision + 1, &call->request);
+  call->stream->Write(call->request);
+  call->stream->Read(&call->response);
+  assert(call->response.created());
+  call->id = call->response.watch_id();
+  return call;
+}
+
+bool EtcdClient::WatchNext(void* _call, std::string* value) {
+  WatchCall* call = static_cast<WatchCall*>(_call);
+  call->stream->Read(&call->response);
+  if (call->response.canceled())
+    return true;
+  // XXX: We get the latest value and ignore the
+  // rest. There should be no problem with that.
+  int size = call->response.events_size();
+  const auto& event = call->response.events(size - 1);
+  *value = event.kv().value();
+  return false;
+}
+
+void EtcdClient::WatchCancel(void* _call) {
+  WatchCall* call = static_cast<WatchCall*>(_call);
+  WatchCancelRequest(call->id, &call->request);
+  call->stream->Write(call->request);
+  call->stream->WritesDone();
+  EnsureRpc(call->stream->Finish());
+  delete call;
 }
 
 }  // namespace crocks

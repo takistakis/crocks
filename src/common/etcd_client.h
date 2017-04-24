@@ -26,23 +26,49 @@
 #include <grpc++/grpc++.h>
 
 #include "gen/etcd.grpc.pb.h"
+#include "gen/etcd.pb.h"
 
 namespace crocks {
+
+struct WatchCall {
+  int id;
+  etcdserverpb::WatchRequest request;
+  etcdserverpb::WatchResponse response;
+  grpc::ClientContext context;
+  std::unique_ptr<grpc::ClientReaderWriter<etcdserverpb::WatchRequest,
+                                           etcdserverpb::WatchResponse>>
+      stream;
+};
 
 class EtcdClient {
  public:
   EtcdClient(const std::string& address);
 
-  // Returns the number of key-value pairs found. Since we
-  // request a single key, it should be 1 if found or 0 if not.
+  // Return 0 if the key was not found, or the revision of
+  // the last modification on this key if it was found.
   int Get(const std::string& key, std::string* value);
   void Put(const std::string& key, const std::string& value);
+  // Return 0 if the key was not found, or 1 if it was found.
   int Delete(const std::string& key);
   bool KeyMissing(const std::string& key);
 
   bool TxnPutIfValueEquals(const std::string& key, const std::string& value,
                            const std::string& old_value);
   bool TxnPutIfKeyMissing(const std::string& key, const std::string& value);
+
+  // Store the current value of "key" in *value, and start watching
+  // it from the next revision. Return a pointer to the WatchCall
+  // instance associated with that call (cast as void*), which
+  // will need to be provided for getting updates and canceling.
+  void* Watch(const std::string& key, std::string* value);
+
+  // Wait for a response and return true if it responds to a cancel
+  // request. If not, store the value of the key being watched in *value.
+  bool WatchNext(void* call, std::string* value);
+
+  // Send a request to cancel the watch call. After canceling,
+  // WatchNext should be called until it returns true.
+  void WatchCancel(void* call);
 
  private:
   std::shared_ptr<grpc::Channel> channel_;

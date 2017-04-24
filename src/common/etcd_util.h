@@ -22,6 +22,7 @@
 
 namespace etcdserverpb {
 class TxnRequest;
+class WatchRequest;
 }
 
 namespace crocks {
@@ -33,6 +34,13 @@ void AddCompareKeyMissing(const std::string& key,
                           etcdserverpb::TxnRequest* request);
 void AddSuccessPut(const std::string& key, const std::string& value,
                    etcdserverpb::TxnRequest* request);
+
+// Watch helpers
+void WatchKeyRequest(const std::string& key,
+                     etcdserverpb::WatchRequest* request);
+void WatchKeyRequest(const std::string& key, int start_revision,
+                     etcdserverpb::WatchRequest* request);
+void WatchCancelRequest(int id, etcdserverpb::WatchRequest* request);
 
 }  // namespace crocks
 

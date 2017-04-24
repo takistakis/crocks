@@ -20,8 +20,7 @@
 #ifndef CROCKS_COMMON_INFO_H
 #define CROCKS_COMMON_INFO_H
 
-#include <assert.h>
-
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -37,13 +36,15 @@ namespace crocks {
 
 class Info {
  public:
-  Info(const std::string& address) : etcd_(address) {}
+  Info(const std::string& address);
 
   int num_shards() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return info_.num_shards();
   }
 
   int num_nodes() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     return info_.nodes_size();
   }
 
@@ -54,34 +55,31 @@ class Info {
   }
 
   int IndexForShard(int id) {
+    std::lock_guard<std::mutex> lock(mutex_);
     return map_[id];
   }
 
   int ShardForKey(const std::string& key) {
-    return Hash(key) % num_shards();
+    return Hash(key) % info_.num_shards();
   }
 
   int IndexForKey(const std::string& key) {
-    return IndexForShard(ShardForKey(key));
+    std::lock_guard<std::mutex> lock(mutex_);
+    return map_[Hash(key) % info_.num_shards()];
+  }
+
+  // Return true if the given key is intended for a different node
+  bool WrongShard(const std::string& key) {
+    return IndexForKey(key) != id_;
   }
 
   std::vector<std::string> Addresses() const {
+    std::lock_guard<std::mutex> lock(mutex_);
     std::vector<std::string> addresses;
     for (const auto& node : info_.nodes())
       addresses.push_back(node.address());
     return addresses;
   };
-
-  std::string Serialize() const {
-    std::string str;
-    assert(info_.SerializeToString(&str));
-    return str;
-  }
-
-  void Parse(const std::string& str) {
-    assert(info_.ParseFromString(str));
-    UpdateMap();
-  }
 
   void Get();
 
@@ -92,12 +90,16 @@ class Info {
   // Remove the node with the given address and redistribute existing shards
   void Remove(const std::string& address);
 
-  // TODO: Watch
-  void Watch(const std::string& key);
-
   void Print();
 
+  void* Watch();
+  bool WatchNext(void* call);
+  void WatchCancel(void* call);
+
  private:
+  std::string Serialize() const;
+  void Parse(const std::string& str);
+
   // Add a node with the given address and assign kShardsPerNode new shards
   void AddWithNewShards(const std::string& address);
 
@@ -108,6 +110,7 @@ class Info {
 
   void UpdateMap();
 
+  mutable std::mutex mutex_;
   EtcdClient etcd_;
   pb::ClusterInfo info_;
   std::unordered_map<int, int> map_;

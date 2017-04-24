@@ -27,9 +27,8 @@
 
 namespace crocks {
 
-// TODO: Cluster info gets never updated. We should
-// watch the info, update it if changed, and ensure that
-// keys in requests really belong to the requested node.
+const grpc::Status invalid_status(grpc::StatusCode::INVALID_ARGUMENT,
+                                  "Not responsible for this shard");
 
 Service::Service(const std::string& address, const std::string& dbpath)
     : info_(address), options_(DefaultRocksdbOptions()), dbpath_(dbpath) {
@@ -40,14 +39,24 @@ Service::Service(const std::string& address, const std::string& dbpath)
 Service::~Service() {
   rocksdb::DestroyDB(dbpath_, options_);
   delete db_;
+
+  info_.WatchCancel(call_);
+  watcher_.join();
 };
 
 void Service::Init(const std::string& address) {
   info_.Add(address);
+  info_.Watch();
+  call_ = info_.Watch();
+  // Create a thread that watches the "info" key and repeatedly
+  // reads for updates. Gets cleaned up by the destructor.
+  watcher_ = std::thread(WatchThread, &info_, call_);
 }
 
 grpc::Status Service::Get(grpc::ServerContext* context, const pb::Key* request,
                           pb::Response* response) {
+  if (info_.WrongShard(request->key()))
+    return invalid_status;
   std::string value;
   rocksdb::Status s = db_->Get(rocksdb::ReadOptions(), request->key(), &value);
   response->set_status(RocksdbStatusCodeToInt(s.code()));
@@ -57,6 +66,8 @@ grpc::Status Service::Get(grpc::ServerContext* context, const pb::Key* request,
 
 grpc::Status Service::Put(grpc::ServerContext* context,
                           const pb::KeyValue* request, pb::Response* response) {
+  if (info_.WrongShard(request->key()))
+    return invalid_status;
   rocksdb::Status s =
       db_->Put(rocksdb::WriteOptions(), request->key(), request->value());
   response->set_status(RocksdbStatusCodeToInt(s.code()));
@@ -65,6 +76,8 @@ grpc::Status Service::Put(grpc::ServerContext* context,
 
 grpc::Status Service::Delete(grpc::ServerContext* context,
                              const pb::Key* request, pb::Response* response) {
+  if (info_.WrongShard(request->key()))
+    return invalid_status;
   rocksdb::Status s = db_->Delete(rocksdb::WriteOptions(), request->key());
   response->set_status(RocksdbStatusCodeToInt(s.code()));
   return grpc::Status::OK;
@@ -73,6 +86,8 @@ grpc::Status Service::Delete(grpc::ServerContext* context,
 grpc::Status Service::SingleDelete(grpc::ServerContext* context,
                                    const pb::Key* request,
                                    pb::Response* response) {
+  if (info_.WrongShard(request->key()))
+    return invalid_status;
   rocksdb::Status s =
       db_->SingleDelete(rocksdb::WriteOptions(), request->key());
   response->set_status(RocksdbStatusCodeToInt(s.code()));
@@ -82,6 +97,8 @@ grpc::Status Service::SingleDelete(grpc::ServerContext* context,
 grpc::Status Service::Merge(grpc::ServerContext* context,
                             const pb::KeyValue* request,
                             pb::Response* response) {
+  if (info_.WrongShard(request->key()))
+    return invalid_status;
   rocksdb::Status s =
       db_->Merge(rocksdb::WriteOptions(), request->key(), request->value());
   response->set_status(RocksdbStatusCodeToInt(s.code()));
@@ -94,9 +111,13 @@ grpc::Status Service::Batch(grpc::ServerContext* context,
   pb::BatchBuffer batch_buffer;
   rocksdb::WriteBatch batch;
 
-  while (reader->Read(&batch_buffer))
-    for (const pb::BatchUpdate& batch_update : batch_buffer.updates())
+  while (reader->Read(&batch_buffer)) {
+    for (const pb::BatchUpdate& batch_update : batch_buffer.updates()) {
+      if (info_.WrongShard(batch_update.key()))
+        return invalid_status;
       ApplyBatchUpdate(&batch, batch_update);
+    }
+  }
 
   if (context->IsCancelled()) {
     std::cerr << "Batch RPC finished unexpectedly" << std::endl;
@@ -124,6 +145,12 @@ grpc::Status Service::Iterator(
   delete it;
 
   return grpc::Status::OK;
+}
+
+void WatchThread(Info* info, void* call) {
+  for (;;)
+    if (info->WatchNext(call))
+      return;
 }
 
 }  // namespace crocks
