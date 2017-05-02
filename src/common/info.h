@@ -72,6 +72,9 @@ class Info {
   bool WrongShard(const std::string& key) {
     return IndexForKey(key) != id_;
   }
+  bool WrongShard(int shard) {
+    return IndexForShard(shard) != id_;
+  }
 
   std::vector<std::string> Addresses() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -79,6 +82,14 @@ class Info {
     for (const auto& node : info_.nodes())
       addresses.push_back(node.address());
     return addresses;
+  };
+
+  std::vector<int> Shards() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<int> shards;
+    for (int shard : info_.nodes(id_).shards())
+      shards.push_back(shard);
+    return shards;
   };
 
   void Get();

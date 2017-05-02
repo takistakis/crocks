@@ -20,6 +20,7 @@
 
 #include <string>
 #include <thread>
+#include <unordered_map>
 
 #include <grpc++/grpc++.h>
 #include <rocksdb/db.h>
@@ -28,6 +29,7 @@
 #include "gen/crocks.grpc.pb.h"
 #include "gen/crocks.pb.h"
 #include "src/common/info.h"
+#include "src/server/util.h"
 
 namespace crocks {
 
@@ -70,6 +72,7 @@ class Service final : public pb::RPC::Service {
   rocksdb::Options options_;
   rocksdb::DB* db_;
   std::string dbpath_;
+  std::unordered_map<int, rocksdb::ColumnFamilyHandle*> cfs_;
 };
 
 void WatchThread(Info* info, void* call);

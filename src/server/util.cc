@@ -23,6 +23,7 @@
 #include <iostream>
 #include <string>
 
+#include <rocksdb/db.h>
 #include <rocksdb/iterator.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/write_batch.h>
@@ -47,19 +48,20 @@ void EnsureRocksdb(const std::string& what, const rocksdb::Status& status) {
 }
 
 void ApplyBatchUpdate(rocksdb::WriteBatch* batch,
+                      rocksdb::ColumnFamilyHandle* cf,
                       const pb::BatchUpdate& batch_update) {
   switch (batch_update.op()) {
     case pb::BatchUpdate::PUT:
-      batch->Put(batch_update.key(), batch_update.value());
+      batch->Put(cf, batch_update.key(), batch_update.value());
       break;
     case pb::BatchUpdate::DELETE:
-      batch->Delete(batch_update.key());
+      batch->Delete(cf, batch_update.key());
       break;
     case pb::BatchUpdate::SINGLE_DELETE:
-      batch->SingleDelete(batch_update.key());
+      batch->SingleDelete(cf, batch_update.key());
       break;
     case pb::BatchUpdate::MERGE:
-      batch->Merge(batch_update.key(), batch_update.value());
+      batch->Merge(cf, batch_update.key(), batch_update.value());
       break;
     case pb::BatchUpdate::CLEAR:
       batch->Clear();
@@ -138,6 +140,21 @@ rocksdb::Options DefaultRocksdbOptions() {
   options.level_compaction_dynamic_level_bytes = true;
 
   return options;
+}
+
+void AddColumnFamilies(
+    std::vector<int> shards, rocksdb::DB* db,
+    std::unordered_map<int, rocksdb::ColumnFamilyHandle*>* cfs) {
+  std::vector<std::string> names;
+  std::vector<rocksdb::ColumnFamilyHandle*> handles;
+  for (int shard : shards)
+    names.push_back(std::to_string(shard));
+  rocksdb::Status s =
+      db->CreateColumnFamilies(rocksdb::ColumnFamilyOptions(), names, &handles);
+  EnsureRocksdb("CreateColumnFamilies", s);
+  int i = 0;
+  for (int shard : shards)
+    (*cfs)[shard] = handles[i++];
 }
 
 }  // namespace crocks

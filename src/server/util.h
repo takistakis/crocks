@@ -18,10 +18,15 @@
 #ifndef CROCKS_SERVER_UTIL_H
 #define CROCKS_SERVER_UTIL_H
 
+#include <unordered_map>
+#include <vector>
+
 #include <rocksdb/options.h>
 #include <rocksdb/status.h>
 
 namespace rocksdb {
+class DB;
+class ColumnFamilyHandle;
 class WriteBatch;
 class Iterator;
 }
@@ -40,6 +45,7 @@ int RocksdbStatusCodeToInt(const rocksdb::Status::Code& status);
 void EnsureRocksdb(const std::string& what, const rocksdb::Status& status);
 
 void ApplyBatchUpdate(rocksdb::WriteBatch* batch,
+                      rocksdb::ColumnFamilyHandle* cf,
                       const pb::BatchUpdate& batch_update);
 
 void ApplyIteratorRequest(rocksdb::Iterator* iterator,
@@ -47,6 +53,10 @@ void ApplyIteratorRequest(rocksdb::Iterator* iterator,
                           pb::IteratorResponse* response);
 
 rocksdb::Options DefaultRocksdbOptions();
+
+void AddColumnFamilies(
+    std::vector<int> shards, rocksdb::DB* db,
+    std::unordered_map<int, rocksdb::ColumnFamilyHandle*>* cfs);
 
 }  // namespace crocks
 

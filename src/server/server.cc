@@ -23,8 +23,6 @@
 #include <rocksdb/status.h>
 #include <rocksdb/write_batch.h>
 
-#include "src/server/util.h"
-
 namespace crocks {
 
 const grpc::Status invalid_status(grpc::StatusCode::INVALID_ARGUMENT,
@@ -38,6 +36,8 @@ Service::Service(const std::string& address, const std::string& dbpath)
 
 Service::~Service() {
   rocksdb::DestroyDB(dbpath_, options_);
+  for (const auto& pair : cfs_)
+    delete pair.second;
   delete db_;
 
   info_.WatchCancel(call_);
@@ -46,7 +46,7 @@ Service::~Service() {
 
 void Service::Init(const std::string& address) {
   info_.Add(address);
-  info_.Watch();
+  AddColumnFamilies(info_.Shards(), db_, &cfs_);
   call_ = info_.Watch();
   // Create a thread that watches the "info" key and repeatedly
   // reads for updates. Gets cleaned up by the destructor.
@@ -55,10 +55,12 @@ void Service::Init(const std::string& address) {
 
 grpc::Status Service::Get(grpc::ServerContext* context, const pb::Key* request,
                           pb::Response* response) {
-  if (info_.WrongShard(request->key()))
+  int shard = info_.ShardForKey(request->key());
+  if (info_.WrongShard(shard))
     return invalid_status;
   std::string value;
-  rocksdb::Status s = db_->Get(rocksdb::ReadOptions(), request->key(), &value);
+  rocksdb::Status s =
+      db_->Get(rocksdb::ReadOptions(), cfs_[shard], request->key(), &value);
   response->set_status(RocksdbStatusCodeToInt(s.code()));
   response->set_value(value);
   return grpc::Status::OK;
@@ -66,19 +68,22 @@ grpc::Status Service::Get(grpc::ServerContext* context, const pb::Key* request,
 
 grpc::Status Service::Put(grpc::ServerContext* context,
                           const pb::KeyValue* request, pb::Response* response) {
-  if (info_.WrongShard(request->key()))
+  int shard = info_.ShardForKey(request->key());
+  if (info_.WrongShard(shard))
     return invalid_status;
-  rocksdb::Status s =
-      db_->Put(rocksdb::WriteOptions(), request->key(), request->value());
+  rocksdb::Status s = db_->Put(rocksdb::WriteOptions(), cfs_[shard],
+                               request->key(), request->value());
   response->set_status(RocksdbStatusCodeToInt(s.code()));
   return grpc::Status::OK;
 }
 
 grpc::Status Service::Delete(grpc::ServerContext* context,
                              const pb::Key* request, pb::Response* response) {
-  if (info_.WrongShard(request->key()))
+  int shard = info_.ShardForKey(request->key());
+  if (info_.WrongShard(shard))
     return invalid_status;
-  rocksdb::Status s = db_->Delete(rocksdb::WriteOptions(), request->key());
+  rocksdb::Status s =
+      db_->Delete(rocksdb::WriteOptions(), cfs_[shard], request->key());
   response->set_status(RocksdbStatusCodeToInt(s.code()));
   return grpc::Status::OK;
 }
@@ -86,10 +91,11 @@ grpc::Status Service::Delete(grpc::ServerContext* context,
 grpc::Status Service::SingleDelete(grpc::ServerContext* context,
                                    const pb::Key* request,
                                    pb::Response* response) {
-  if (info_.WrongShard(request->key()))
+  int shard = info_.ShardForKey(request->key());
+  if (info_.WrongShard(shard))
     return invalid_status;
   rocksdb::Status s =
-      db_->SingleDelete(rocksdb::WriteOptions(), request->key());
+      db_->SingleDelete(rocksdb::WriteOptions(), cfs_[shard], request->key());
   response->set_status(RocksdbStatusCodeToInt(s.code()));
   return grpc::Status::OK;
 }
@@ -97,10 +103,11 @@ grpc::Status Service::SingleDelete(grpc::ServerContext* context,
 grpc::Status Service::Merge(grpc::ServerContext* context,
                             const pb::KeyValue* request,
                             pb::Response* response) {
-  if (info_.WrongShard(request->key()))
+  int shard = info_.ShardForKey(request->key());
+  if (info_.WrongShard(shard))
     return invalid_status;
-  rocksdb::Status s =
-      db_->Merge(rocksdb::WriteOptions(), request->key(), request->value());
+  rocksdb::Status s = db_->Merge(rocksdb::WriteOptions(), cfs_[shard],
+                                 request->key(), request->value());
   response->set_status(RocksdbStatusCodeToInt(s.code()));
   return grpc::Status::OK;
 }
@@ -113,9 +120,10 @@ grpc::Status Service::Batch(grpc::ServerContext* context,
 
   while (reader->Read(&batch_buffer)) {
     for (const pb::BatchUpdate& batch_update : batch_buffer.updates()) {
-      if (info_.WrongShard(batch_update.key()))
+      int shard = info_.ShardForKey(batch_update.key());
+      if (info_.WrongShard(shard))
         return invalid_status;
-      ApplyBatchUpdate(&batch, batch_update);
+      ApplyBatchUpdate(&batch, cfs_[shard], batch_update);
     }
   }
 
