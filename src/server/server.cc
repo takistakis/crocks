@@ -19,9 +19,11 @@
 
 #include <iostream>
 
-#include <rocksdb/iterator.h>
 #include <rocksdb/status.h>
 #include <rocksdb/write_batch.h>
+
+#include "src/server/iterator.h"
+#include "src/server/util.h"
 
 namespace crocks {
 
@@ -144,7 +146,7 @@ grpc::Status Service::Iterator(
   pb::IteratorRequest request;
   pb::IteratorResponse response;
   // https://github.com/facebook/rocksdb/wiki/Basic-Operations#iteration
-  rocksdb::Iterator* it = db_->NewIterator(rocksdb::ReadOptions());
+  MultiIterator* it = new MultiIterator(db_, cfs_);
   while (stream->Read(&request)) {
     response.Clear();
     ApplyIteratorRequest(it, request, &response);

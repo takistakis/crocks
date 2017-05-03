@@ -29,7 +29,6 @@
 #include "gen/crocks.grpc.pb.h"
 #include "gen/crocks.pb.h"
 #include "src/common/info.h"
-#include "src/server/util.h"
 
 namespace crocks {
 

@@ -28,7 +28,6 @@ namespace rocksdb {
 class DB;
 class ColumnFamilyHandle;
 class WriteBatch;
-class Iterator;
 }
 
 namespace crocks {
@@ -39,6 +38,8 @@ class IteratorRequest;
 class IteratorResponse;
 }
 
+class MultiIterator;
+
 int RocksdbStatusCodeToInt(const rocksdb::Status::Code& status);
 
 // Exit unsuccessfully in case of RocksDB failure
@@ -48,7 +49,7 @@ void ApplyBatchUpdate(rocksdb::WriteBatch* batch,
                       rocksdb::ColumnFamilyHandle* cf,
                       const pb::BatchUpdate& batch_update);
 
-void ApplyIteratorRequest(rocksdb::Iterator* iterator,
+void ApplyIteratorRequest(MultiIterator* iterator,
                           const pb::IteratorRequest& request,
                           pb::IteratorResponse* response);
 

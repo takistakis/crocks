@@ -24,12 +24,12 @@
 #include <string>
 
 #include <rocksdb/db.h>
-#include <rocksdb/iterator.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/write_batch.h>
 
 #include <crocks/status.h>
 #include "gen/crocks.pb.h"
+#include "src/server/iterator.h"
 
 namespace crocks {
 
@@ -73,7 +73,7 @@ void ApplyBatchUpdate(rocksdb::WriteBatch* batch,
 
 const int kIteratorBatchSize = 10;
 
-void MakeNextBatch(rocksdb::Iterator* it, pb::IteratorResponse* response) {
+void MakeNextBatch(MultiIterator* it, pb::IteratorResponse* response) {
   for (int i = 0; i < kIteratorBatchSize && it->Valid(); i++) {
     pb::KeyValue* kv = response->add_kvs();
     kv->set_key(it->key().ToString());
@@ -81,10 +81,10 @@ void MakeNextBatch(rocksdb::Iterator* it, pb::IteratorResponse* response) {
     it->Next();
   }
   response->set_done(it->Valid() ? false : true);
-  response->set_status(RocksdbStatusCodeToInt(it->status().code()));
+  response->set_status(it->status().rocksdb_code());
 }
 
-void MakePrevBatch(rocksdb::Iterator* it, pb::IteratorResponse* response) {
+void MakePrevBatch(MultiIterator* it, pb::IteratorResponse* response) {
   for (int i = 0; i < kIteratorBatchSize && it->Valid(); i++) {
     pb::KeyValue* kv = response->add_kvs();
     kv->set_key(it->key().ToString());
@@ -92,15 +92,14 @@ void MakePrevBatch(rocksdb::Iterator* it, pb::IteratorResponse* response) {
     it->Prev();
   }
   response->set_done(it->Valid() ? false : true);
-  response->set_status(RocksdbStatusCodeToInt(it->status().code()));
+  response->set_status(it->status().rocksdb_code());
 }
 
 // Once we have a seek request, guess which way the client will
 // iterate and send a bunch of key-value pairs and whatever
 // else is needed. When the iterator becomes invalid, iteration
 // stops and the done field of the response is set to true.
-void ApplyIteratorRequest(rocksdb::Iterator* it,
-                          const pb::IteratorRequest& request,
+void ApplyIteratorRequest(MultiIterator* it, const pb::IteratorRequest& request,
                           pb::IteratorResponse* response) {
   switch (request.op()) {
     case pb::IteratorRequest::SEEK_TO_FIRST:

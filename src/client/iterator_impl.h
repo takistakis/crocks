@@ -27,10 +27,27 @@
 
 #include <crocks/iterator.h>
 #include <crocks/status.h>
-#include "src/client/heap.h"
 #include "src/client/node_iterator.h"
+#include "src/common/heap.h"
 
 namespace crocks {
+
+// Used for the min heap (forward iteration)
+struct NodeIteratorGreater {
+  bool operator()(const NodeIterator* lhs, const NodeIterator* rhs) const {
+    return lhs->key() > rhs->key();
+  }
+};
+
+// Used for the max heap (reverse iteration)
+struct NodeIteratorLess {
+  bool operator()(const NodeIterator* lhs, const NodeIterator* rhs) const {
+    return lhs->key() < rhs->key();
+  }
+};
+
+typedef Heap<NodeIterator, NodeIteratorGreater> MinHeap;
+typedef Heap<NodeIterator, NodeIteratorLess> MaxHeap;
 
 class Cluster;
 
