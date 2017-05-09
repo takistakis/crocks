@@ -57,6 +57,7 @@ class WriteBatch::WriteBatchImpl {
   void Merge(const std::string& key, const std::string& value);
   void Clear();
   Status Write();
+  Status WriteWithLock();
 
  private:
   AsyncBatchCall* EnsureBatchCall(int idx);
@@ -64,6 +65,8 @@ class WriteBatch::WriteBatchImpl {
   bool QueueAsyncNext();
   void StreamIfExceededThreshold(int idx);
   void Stream(int idx);
+  void DoWrite();
+  Status GetStatus();
 
   Cluster* db_;
   grpc::CompletionQueue cq_;

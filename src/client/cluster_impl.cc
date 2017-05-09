@@ -68,6 +68,14 @@ int Cluster::num_nodes() const {
   return impl_->num_nodes();
 }
 
+void Cluster::Lock() {
+  return impl_->Lock();
+}
+
+void Cluster::Unlock() {
+  return impl_->Unlock();
+}
+
 Cluster* DBOpen(const std::string& address) {
   return new Cluster(address);
 }

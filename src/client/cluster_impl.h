@@ -49,6 +49,14 @@ class Cluster::ClusterImpl {
     return info_.num_nodes();
   }
 
+  void Lock() {
+    info_.Lock();
+  }
+
+  void Unlock() {
+    info_.Unlock();
+  }
+
  private:
   Info info_;
   std::vector<Node*> nodes_;

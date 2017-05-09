@@ -107,6 +107,14 @@ class Info {
   bool WatchNext(void* call);
   void WatchCancel(void* call);
 
+  void Lock() {
+    etcd_.Lock();
+  }
+
+  void Unlock() {
+    etcd_.Unlock();
+  }
+
  private:
   std::string Serialize() const;
   void Parse(const std::string& str);

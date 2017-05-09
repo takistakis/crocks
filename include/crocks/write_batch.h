@@ -57,6 +57,10 @@ class WriteBatch {
   // waiting for every single server to respond.
   Status Write();
 
+  // The same as Write, but wrap the request in a lock. This ensures that
+  // batches get committed in the same order at each node.
+  Status WriteWithLock();
+
  private:
   class WriteBatchImpl;
   WriteBatchImpl* const impl_;

@@ -60,6 +60,10 @@ Status WriteBatch::Write() {
   return impl_->Write();
 }
 
+Status WriteBatch::WriteWithLock() {
+  return impl_->WriteWithLock();
+}
+
 // Write batch implementation
 WriteBatch::WriteBatchImpl::WriteBatchImpl(Cluster* db)
     : db_(db),
@@ -143,41 +147,15 @@ void WriteBatch::WriteBatchImpl::Clear() {
 }
 
 Status WriteBatch::WriteBatchImpl::Write() {
-  AsyncBatchCall* call;
+  DoWrite();
+  return GetStatus();
+}
 
-  // Fan-out the remaining buffers and the finish-RPC requests
-  for (int idx = 0; idx < db_->num_nodes(); idx++) {
-    call = calls_[idx];
-    if (call == nullptr)
-      continue;
-    Stream(idx);
-    call->writer->WritesDone(call);
-    call->writer->Finish(&call->status, call);
-    call->pending_requests += 2;
-  }
-
-  // Make sure every server has responded
-  for (auto call : calls_) {
-    if (call == nullptr)
-      continue;
-    while (call->pending_requests > 0)
-      QueueNext();
-  }
-
-  // Check the statuses and return the first that's not OK
-  for (int idx = 0; idx < db_->num_nodes(); idx++) {
-    call = calls_[idx];
-    if (call == nullptr)
-      continue;
-    call->writer = nullptr;
-    if (call->status.ok()) {
-      if (call->response.status() != rocksdb::StatusCode::OK)
-        return Status(call->response.status());
-    } else {
-      return Status(call->status);
-    }
-  }
-  return Status();
+Status WriteBatch::WriteBatchImpl::WriteWithLock() {
+  db_->Lock();
+  DoWrite();
+  db_->Unlock();
+  return GetStatus();
 }
 
 // private
@@ -270,6 +248,44 @@ void WriteBatch::WriteBatchImpl::Stream(int idx) {
     call->byte_size = 0;
     call->pending_requests = 1;
   }
+}
+
+void WriteBatch::WriteBatchImpl::DoWrite() {
+  // Fan-out the remaining buffers and the finish-RPC requests
+  for (int idx = 0; idx < db_->num_nodes(); idx++) {
+    AsyncBatchCall* call = calls_[idx];
+    if (call == nullptr)
+      continue;
+    Stream(idx);
+    call->writer->WritesDone(call);
+    call->writer->Finish(&call->status, call);
+    call->pending_requests += 2;
+  }
+
+  // Make sure every server has responded
+  for (auto call : calls_) {
+    if (call == nullptr)
+      continue;
+    while (call->pending_requests > 0)
+      QueueNext();
+  }
+}
+
+Status WriteBatch::WriteBatchImpl::GetStatus() {
+  // Check the statuses and return the first that's not OK
+  for (int idx = 0; idx < db_->num_nodes(); idx++) {
+    AsyncBatchCall* call = calls_[idx];
+    if (call == nullptr)
+      continue;
+    call->writer = nullptr;
+    if (call->status.ok()) {
+      if (call->response.status() != rocksdb::StatusCode::OK)
+        return Status(call->response.status());
+    } else {
+      return Status(call->status);
+    }
+  }
+  return Status();
 }
 
 }  // namespace crocks

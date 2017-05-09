@@ -44,6 +44,9 @@ class Cluster {
 
   int num_nodes() const;
 
+  void Lock();
+  void Unlock();
+
  private:
   class ClusterImpl;
   ClusterImpl* const impl_;
