@@ -130,4 +130,37 @@ void EtcdClient::WatchCancel(void* _call) {
   delete call;
 }
 
+void EtcdClient::WatchEnd(void* _call) {
+  WatchCall* call = static_cast<WatchCall*>(_call);
+  WatchCancelRequest(call->id, &call->request);
+  call->stream->Write(call->request);
+  call->stream->WritesDone();
+  std::string value;
+  while (!WatchNext(_call, &value))
+    ;
+  EnsureRpc(call->stream->Finish());
+  delete call;
+}
+
+void EtcdClient::Lock() {
+  bool succeeded;
+  if (KeyMissing("lock"))
+    succeeded = TxnPutIfKeyMissing("lock", "taken");
+  else
+    succeeded = TxnPutIfValueEquals("lock", "taken", "free");
+  while (!succeeded) {
+    std::string value;
+    void* call = Watch("lock", &value);
+    while (value != "free")
+      WatchNext(call, &value);
+    WatchEnd(call);
+    succeeded = TxnPutIfValueEquals("lock", "taken", "free");
+  }
+}
+
+void EtcdClient::Unlock() {
+  bool succeeded = TxnPutIfValueEquals("lock", "free", "taken");
+  assert(succeeded);
+}
+
 }  // namespace crocks

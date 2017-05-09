@@ -67,8 +67,16 @@ class EtcdClient {
   bool WatchNext(void* call, std::string* value);
 
   // Send a request to cancel the watch call. After canceling,
-  // WatchNext should be called until it returns true.
+  // WatchNext should be called until it returns true. This must happen
+  // in a different thread, otherwise WatchCancel blocks forever.
   void WatchCancel(void* call);
+
+  // Send a request to cancel the watch call,
+  // wait for the response and finish the RPC.
+  void WatchEnd(void* call);
+
+  void Lock();
+  void Unlock();
 
  private:
   std::shared_ptr<grpc::Channel> channel_;
