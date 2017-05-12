@@ -36,9 +36,12 @@ const std::string usage_message(
     "  get <key>          Get key.\n"
     "  put <key> <value>  Put key.\n"
     "  del <key>          Delete key.\n"
+    "  run                Change cluster state to RUNNING.\n"
+    "  migrate            Change cluster state to MIGRATING.\n"
     "  list               Print every key.\n"
     "  dump               Print every key-value pair.\n"
     "  clear              Delete all keys.\n"
+    "  remove <address>   Remove node from the cluster.\n"
     "  info               Print cluster info.\n"
     "\n"
     "Options:\n"
@@ -88,6 +91,16 @@ void Delete(const std::string& address, const std::string& key) {
   delete db;
 }
 
+void Run(const std::string& address) {
+  crocks::Info info(address);
+  info.Run();
+}
+
+void Migrate(const std::string& address) {
+  crocks::Info info(address);
+  info.Migrate();
+}
+
 void List(const std::string& address) {
   crocks::Cluster* db = new crocks::Cluster(address);
   crocks::Iterator* it = new crocks::Iterator(db);
@@ -120,6 +133,11 @@ void Clear(const std::string& address) {
   EnsureRpc(status);
   delete it;
   delete db;
+}
+
+void Remove(const std::string& etcd_address, const std::string& node_address) {
+  crocks::Info info(etcd_address);
+  info.Remove(node_address);
 }
 
 void Info(const std::string& address) {
@@ -171,6 +189,14 @@ int main(int argc, char** argv) {
     EnsureArguments(argc - optind == 1);
     Delete(etcd_address, argv[optind]);
 
+  } else if (command == "run") {
+    EnsureArguments(argc == optind);
+    Run(etcd_address);
+
+  } else if (command == "migrate") {
+    EnsureArguments(argc == optind);
+    Migrate(etcd_address);
+
   } else if (command == "list") {
     EnsureArguments(argc == optind);
     List(etcd_address);
@@ -182,6 +208,10 @@ int main(int argc, char** argv) {
   } else if (command == "clear") {
     EnsureArguments(argc == optind);
     Clear(etcd_address);
+
+  } else if (command == "remove") {
+    EnsureArguments(argc - optind == 1);
+    Remove(etcd_address, argv[optind]);
 
   } else if (command == "info") {
     EnsureArguments(argc == optind);

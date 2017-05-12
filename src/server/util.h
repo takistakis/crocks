@@ -18,6 +18,7 @@
 #ifndef CROCKS_SERVER_UTIL_H
 #define CROCKS_SERVER_UTIL_H
 
+#include <string>
 #include <unordered_map>
 #include <vector>
 

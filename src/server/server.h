@@ -64,6 +64,10 @@ class Service final : public pb::RPC::Service {
       grpc::ServerReaderWriter<pb::IteratorResponse, pb::IteratorRequest>*
           stream) override;
 
+  grpc::Status Migrate(
+      grpc::ServerContext* context, const pb::MigrateRequest* request,
+      grpc::ServerWriter<pb::MigrateResponse>* writer) override;
+
  private:
   Info info_;
   void* call_ = nullptr;
@@ -74,7 +78,7 @@ class Service final : public pb::RPC::Service {
   std::unordered_map<int, rocksdb::ColumnFamilyHandle*> cfs_;
 };
 
-void WatchThread(Info* info, void* call);
+void SyncWatchThread(Info* info, void* call);
 
 }  // namespace crocks
 

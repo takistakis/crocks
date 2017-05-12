@@ -68,6 +68,8 @@ class Info {
     return map_[Hash(key) % info_.num_shards()];
   }
 
+  void UpdateIndex();
+
   // Return true if the given key is intended for a different node
   bool WrongShard(const std::string& key) {
     return IndexForKey(key) != id_;
@@ -84,6 +86,11 @@ class Info {
     return addresses;
   };
 
+  std::string Address(int id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return info_.nodes(id).address();
+  };
+
   std::vector<int> Shards() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<int> shards;
@@ -92,20 +99,75 @@ class Info {
     return shards;
   };
 
+  std::vector<int> future() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<int> future;
+    for (int shard : info_.nodes(id_).future())
+      future.push_back(shard);
+    return future;
+  };
+
   void Get();
 
   // Add a node with the given address and send the updated cluster
   // info to etcd, repeating the transaction until succeeded.
   void Add(const std::string& address);
 
-  // Remove the node with the given address and redistribute existing shards
   void Remove(const std::string& address);
+
+  // Change cluster state to RUNNING
+  void Run();
+
+  // Change cluster state to MIGRATING
+  void Migrate();
+
+  bool IsInit() const {
+    return info_.state() == pb::ClusterInfo::INIT;
+  }
+
+  bool IsRunning() const {
+    return info_.state() == pb::ClusterInfo::RUNNING;
+  }
+
+  bool IsMigrating() const {
+    return info_.state() == pb::ClusterInfo::MIGRATING;
+  }
 
   void Print();
 
   void* Watch();
   bool WatchNext(void* call);
   void WatchCancel(void* call);
+
+  std::unordered_map<int, std::vector<int>> tasks() const {
+    // Set and read only by the watcher thread so there's no need for a lock
+    return tasks_;
+  }
+
+  bool IsImporting(int shard) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return importing_[shard];
+  }
+
+  void SetImported(int shard) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    importing_[shard] = false;
+  }
+
+  void SetImporting(int shard) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    importing_[shard] = true;
+  }
+
+  void RedistributeShards();
+
+  void UpdateTasks();
+
+  void GiveShard(int shard);
+
+  bool NoMigrations();
+
+  void Remove();
 
   void Lock() {
     etcd_.Lock();
@@ -122,19 +184,23 @@ class Info {
   // Add a node with the given address and assign kShardsPerNode new shards
   void AddWithNewShards(const std::string& address);
 
-  // Add a node with the given address and redistribute existing shards
-  void AddRedistributingShards(const std::string& address);
+  void RemoveNode(const std::string& address);
 
-  std::vector<int> Distribute(int s, int n);
+  std::vector<int> Distribute(int s, int n, const std::vector<bool>& skip);
+
+  void DoGiveShard(int shard);
 
   void UpdateMap();
 
   mutable std::mutex mutex_;
   EtcdClient etcd_;
   pb::ClusterInfo info_;
-  std::unordered_map<int, int> map_;
+  std::unordered_map<int /* shard */, int /* node */> map_;
   std::string address_;
   int id_ = -1;
+
+  std::unordered_map<int /* node */, std::vector<int> /* shards */> tasks_;
+  std::unordered_map<int /* shard */, bool> importing_;
 };
 
 }  // namespace crocks

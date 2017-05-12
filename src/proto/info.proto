@@ -5,9 +5,18 @@ package crocks.pb;
 message NodeInfo {
   string address = 1;
   repeated int32 shards = 2;
+  repeated int32 future = 3;
+  bool remove = 4;
 }
 
 message ClusterInfo {
-  int32 num_shards = 1;
+  enum State {
+    INIT = 0;
+    RUNNING = 1;
+    MIGRATING = 2;
+    SHUTDOWN = 3;
+  }
+  State state = 1;
+  int32 num_shards = 2;
   repeated NodeInfo nodes = 3;
 }

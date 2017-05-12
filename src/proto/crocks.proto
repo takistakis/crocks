@@ -18,6 +18,13 @@ service RPC {
 
   // Wrapper around rocksdb::Iterator
   rpc Iterator(stream IteratorRequest) returns (stream IteratorResponse) {}
+
+  // A shard is sent as a stream of MigrateResponse messages and can be
+  // made up by multiple SST files. The last MigrateResponse message
+  // of a certain file has the eof flag set to true. As the receiving
+  // node gets messages, he appends the raw bytes to a file, and when
+  // a message is marked as eof, he closes the file and ingests it.
+  rpc Migrate(MigrateRequest) returns (stream MigrateResponse) {}
 }
 
 message Key {
@@ -68,4 +75,14 @@ message IteratorResponse {
   repeated KeyValue kvs = 1;
   bool done = 2;
   int32 status = 3;
+}
+
+message MigrateRequest {
+  int32 shard = 1;
+}
+
+message MigrateResponse {
+  bool empty = 1;
+  bool eof = 2;
+  bytes chunk = 3;
 }

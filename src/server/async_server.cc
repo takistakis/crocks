@@ -21,7 +21,11 @@
 #include <stdlib.h>
 
 #include <algorithm>
+#include <atomic>
+#include <chrono>
 #include <iostream>
+#include <utility>
+#include <vector>
 
 #include <grpc++/grpc++.h>
 #include <rocksdb/db.h>
@@ -30,18 +34,15 @@
 
 #include "gen/crocks.pb.h"
 #include "src/server/iterator.h"
+#include "src/server/migrate_util.h"
 #include "src/server/util.h"
+
+std::atomic<bool> shutdown(false);
 
 namespace crocks {
 
 const grpc::Status invalid_status(grpc::StatusCode::INVALID_ARGUMENT,
                                   "Not responsible for this shard");
-
-void AsyncWatchThread(Info* info, void* call) {
-  for (;;)
-    if (info->WatchNext(call))
-      return;
-}
 
 // Simple POD struct used as an argument wrapper for calls
 struct CallData {
@@ -57,6 +58,7 @@ struct CallData {
 class Call {
  public:
   virtual void Proceed(bool ok) = 0;
+  virtual void Delete() = 0;
 };
 
 class GetCall final : public Call {
@@ -85,8 +87,7 @@ class GetCall final : public Call {
         if (data_->info->WrongShard(shard)) {
           responder_.FinishWithError(invalid_status, this);
         } else {
-          s = data_->db->Get(rocksdb::ReadOptions(), data_->cfs->at(shard),
-                             request_.key(), &value);
+          s = Get(shard, request_.key(), &value);
           response_.set_status(RocksdbStatusCodeToInt(s.code()));
           response_.set_value(value);
           responder_.Finish(response_, grpc::Status::OK, this);
@@ -100,6 +101,21 @@ class GetCall final : public Call {
         delete this;
         break;
     }
+  }
+
+  rocksdb::Status Get(int shard, const std::string& key, std::string* value) {
+    rocksdb::Status s;
+    rocksdb::ColumnFamilyHandle* cf = data_->cfs->at(shard);
+    if (data_->info->IsImporting(shard))
+      std::cerr << data_->info->id() << ": Get request for shard " << shard
+                << " while importing. Undefined behavior." << std::endl;
+    else
+      s = data_->db->Get(rocksdb::ReadOptions(), cf, key, value);
+    return s;
+  }
+
+  void Delete() {
+    delete this;
   }
 
  private:
@@ -137,8 +153,7 @@ class PutCall final : public Call {
         if (data_->info->WrongShard(shard)) {
           responder_.FinishWithError(invalid_status, this);
         } else {
-          s = data_->db->Put(rocksdb::WriteOptions(), data_->cfs->at(shard),
-                             request_.key(), request_.value());
+          Put(shard, request_.key(), request_.value());
           response_.set_status(RocksdbStatusCodeToInt(s.code()));
           responder_.Finish(response_, grpc::Status::OK, this);
         }
@@ -151,6 +166,22 @@ class PutCall final : public Call {
         delete this;
         break;
     }
+  }
+
+  rocksdb::Status Put(int shard, const std::string& key,
+                      const std::string& value) {
+    rocksdb::Status s;
+    rocksdb::ColumnFamilyHandle* cf = data_->cfs->at(shard);
+    if (data_->info->IsImporting(shard))
+      std::cerr << data_->info->id() << ": Put request for shard " << shard
+                << " while importing. Undefined behavior." << std::endl;
+    else
+      s = data_->db->Put(rocksdb::WriteOptions(), cf, key, value);
+    return s;
+  }
+
+  void Delete() {
+    delete this;
   }
 
  private:
@@ -188,8 +219,7 @@ class DeleteCall final : public Call {
         if (data_->info->WrongShard(shard)) {
           responder_.FinishWithError(invalid_status, this);
         } else {
-          s = data_->db->Delete(rocksdb::WriteOptions(), data_->cfs->at(shard),
-                                request_.key());
+          Delete(shard, request_.key());
           response_.set_status(RocksdbStatusCodeToInt(s.code()));
           responder_.Finish(response_, grpc::Status::OK, this);
         }
@@ -202,6 +232,21 @@ class DeleteCall final : public Call {
         delete this;
         break;
     }
+  }
+
+  rocksdb::Status Delete(int shard, const std::string& key) {
+    rocksdb::Status s;
+    rocksdb::ColumnFamilyHandle* cf = data_->cfs->at(shard);
+    if (data_->info->IsImporting(shard))
+      std::cerr << data_->info->id() << ": Delete request for shard " << shard
+                << " while importing. Undefined behavior." << std::endl;
+    else
+      s = data_->db->Delete(rocksdb::WriteOptions(), cf, key);
+    return s;
+  }
+
+  void Delete() {
+    delete this;
   }
 
  private:
@@ -252,7 +297,13 @@ class BatchCall final : public Call {
               reader_.FinishWithError(invalid_status, this);
               status_ = FINISH;
             }
-            ApplyBatchUpdate(&batch_, data_->cfs->at(shard), batch_update);
+            rocksdb::ColumnFamilyHandle* cf = data_->cfs->at(shard);
+            if (data_->info->IsImporting(shard))
+              std::cerr << data_->info->id() << ": Batch request for shard "
+                        << shard << " while importing. Undefined behavior."
+                        << std::endl;
+            else
+              ApplyBatchUpdate(&batch_, cf, batch_update);
           }
         } else {
           status_ = DONE;
@@ -273,6 +324,10 @@ class BatchCall final : public Call {
         delete this;
         break;
     }
+  }
+
+  void Delete() {
+    delete this;
   }
 
  private:
@@ -341,6 +396,10 @@ class IteratorCall final : public Call {
     }
   }
 
+  void Delete() {
+    delete this;
+  }
+
  private:
   CallData* data_;
   grpc::ServerContext ctx_;
@@ -353,6 +412,89 @@ class IteratorCall final : public Call {
   MultiIterator* it_ = nullptr;
 };
 
+class MigrateCall final : public Call {
+ public:
+  explicit MigrateCall(CallData* data)
+      : data_(data), writer_(&ctx_), status_(REQUEST) {
+    data_->service->RequestMigrate(&ctx_, &request_, &writer_, data_->cq,
+                                   data_->cq, this);
+  }
+
+  void Proceed(bool ok) {
+    rocksdb::Status s;
+    pb::MigrateResponse response;
+    bool retval;
+
+    switch (status_) {
+      case REQUEST:
+        new MigrateCall(data_);
+        if (!ok) {
+          std::cerr << "Migrate in REQUEST was not ok. Finishing." << std::endl;
+          writer_.Finish(grpc::Status::CANCELLED, this);
+          status_ = FINISH;
+          break;
+        }
+
+        std::cerr << data_->info->id() << ": Migrating shard "
+                  << request_.shard() << std::endl;
+        data_->info->GiveShard(request_.shard());
+        migrator_ = std::unique_ptr<ShardMigrator>(
+            new ShardMigrator(data_->db, request_.shard()));
+        cf_ = data_->cfs->at(request_.shard());
+        migrator_->DumpShard(cf_);
+        retval = migrator_->ReadChunk(&response);
+        assert(retval);
+        writer_.Write(response, this);
+        status_ = WRITE;
+        break;
+
+      case WRITE:
+        if (migrator_->ReadChunk(&response)) {
+          writer_.Write(response, this);
+          status_ = WRITE;
+        } else {
+          writer_.Finish(grpc::Status::OK, this);
+          status_ = FINISH;
+        }
+        break;
+
+      case FINISH:
+        if (!ok)
+          std::cerr << "Migrate RPC finished unexpectedly" << std::endl;
+
+        data_->db->DropColumnFamily(cf_);
+        delete cf_;
+        data_->cfs->erase(request_.shard());
+
+        if (data_->info->Shards().size() == 0) {
+          if (data_->cfs->size() == 0) {
+            data_->info->Remove();
+            // std::cerr << "Done. Press ^C to exit." << std::endl;
+            shutdown.store(true);
+          }
+        }
+
+        delete this;
+        break;
+    }
+  }
+
+  void Delete() {
+    delete this;
+  }
+
+ private:
+  CallData* data_;
+  grpc::ServerContext ctx_;
+  grpc::ServerAsyncWriter<pb::MigrateResponse> writer_;
+  pb::MigrateRequest request_;
+  pb::Response response_;
+  enum CallStatus { REQUEST, WRITE, FINISH };
+  CallStatus status_;
+  std::unique_ptr<ShardMigrator> migrator_;
+  rocksdb::ColumnFamilyHandle* cf_;
+};
+
 AsyncServer::AsyncServer(const std::string& etcd_address,
                          const std::string& dbpath)
     : dbpath_(dbpath), options_(DefaultRocksdbOptions()), info_(etcd_address) {
@@ -361,8 +503,18 @@ AsyncServer::AsyncServer(const std::string& etcd_address,
 }
 
 AsyncServer::~AsyncServer() {
-  server_->Shutdown();
+  std::cerr << "Shutting down..." << std::endl;
+  server_->Shutdown(std::chrono::system_clock::now());
   cq_->Shutdown();
+  void* tag;
+  bool ok;
+  while (cq_->Next(&tag, &ok))
+    static_cast<Call*>(tag)->Delete();
+  info_.WatchCancel(call_);
+  watcher_.join();
+  for (const auto& pair : cfs_)
+    delete pair.second;
+  delete db_;
 }
 
 void AsyncServer::Init(const std::string& listening_address,
@@ -385,7 +537,7 @@ void AsyncServer::Init(const std::string& listening_address,
   call_ = info_.Watch();
   // Create a thread that watches the "info" key and repeatedly
   // reads for updates. Gets cleaned up by the destructor.
-  watcher_ = std::thread(AsyncWatchThread, &info_, call_);
+  watcher_ = std::thread(WatchThread, &info_, db_, &cfs_, call_);
   std::cerr << "Asynchronous server listening on port " << port << std::endl;
 }
 
@@ -396,6 +548,7 @@ void AsyncServer::Run() {
   new DeleteCall(&data);
   new BatchCall(&data);
   new IteratorCall(&data);
+  new MigrateCall(&data);
   void* tag;
   bool ok;
   for (;;) {
@@ -407,6 +560,8 @@ void AsyncServer::Run() {
       break;
     }
     static_cast<Call*>(tag)->Proceed(ok);
+    if (shutdown.load())
+      break;
   }
 }
 

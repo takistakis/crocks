@@ -83,6 +83,7 @@ Cluster* DBOpen(const std::string& address) {
 // Cluster implementation
 Cluster::ClusterImpl::ClusterImpl(const std::string& address) : info_(address) {
   info_.Get();
+  info_.Run();
   for (const std::string& address : info_.Addresses())
     nodes_.push_back(new Node(address));
 }

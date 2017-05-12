@@ -18,6 +18,8 @@
 #include "src/server/server.h"
 
 #include <iostream>
+#include <thread>
+#include <utility>
 
 #include <rocksdb/status.h>
 #include <rocksdb/write_batch.h>
@@ -41,7 +43,6 @@ Service::~Service() {
   for (const auto& pair : cfs_)
     delete pair.second;
   delete db_;
-
   info_.WatchCancel(call_);
   watcher_.join();
 };
@@ -52,7 +53,7 @@ void Service::Init(const std::string& address) {
   call_ = info_.Watch();
   // Create a thread that watches the "info" key and repeatedly
   // reads for updates. Gets cleaned up by the destructor.
-  watcher_ = std::thread(WatchThread, &info_, call_);
+  watcher_ = std::thread(SyncWatchThread, &info_, call_);
 }
 
 grpc::Status Service::Get(grpc::ServerContext* context, const pb::Key* request,
@@ -157,7 +158,16 @@ grpc::Status Service::Iterator(
   return grpc::Status::OK;
 }
 
-void WatchThread(Info* info, void* call) {
+grpc::Status Service::Migrate(grpc::ServerContext* context,
+                              const pb::MigrateRequest* request,
+                              grpc::ServerWriter<pb::MigrateResponse>* writer) {
+  std::string msg = "The synchronous server does not support migrations";
+  std::cerr << msg << std::endl;
+  grpc::Status unimplemented(grpc::StatusCode::UNIMPLEMENTED, msg);
+  return unimplemented;
+}
+
+void SyncWatchThread(Info* info, void* call) {
   for (;;)
     if (info->WatchNext(call))
       return;
