@@ -58,6 +58,8 @@ class Cluster::ClusterImpl {
   }
 
  private:
+  void Update();
+
   Info info_;
   std::vector<Node*> nodes_;
 };

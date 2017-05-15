@@ -23,7 +23,8 @@ namespace crocks {
 
 Node::Node(const std::string& address)
     : stub_(pb::RPC::NewStub(
-          grpc::CreateChannel(address, grpc::InsecureChannelCredentials()))) {}
+          grpc::CreateChannel(address, grpc::InsecureChannelCredentials()))),
+      address_(address) {}
 
 Status Node::Get(const std::string& key, std::string* value) {
   grpc::ClientContext context;

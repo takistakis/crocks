@@ -21,12 +21,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#include <iostream>
-#include <memory>
-#include <utility>
-#include <vector>
-
-#include <grpc++/grpc++.h>
 #include <rocksdb/db.h>
 #include <rocksdb/env.h>
 #include <rocksdb/iterator.h>
@@ -34,10 +28,7 @@
 #include <rocksdb/sst_file_writer.h>
 #include <rocksdb/status.h>
 
-#include <crocks/status.h>
-#include "gen/crocks.grpc.pb.h"
 #include "gen/crocks.pb.h"
-#include "src/common/info.h"
 #include "src/server/util.h"
 
 // First try. For each shard, write as many
@@ -52,7 +43,6 @@ std::string Filename(const std::string& path, int shard, int num) {
 ShardMigrator::ShardMigrator(rocksdb::DB* db, int shard)
     : db_(db), total_(0), num_(0), shard_(shard), empty_(false), done_(false) {}
 
-// ShardMigrator
 void ShardMigrator::DumpShard(rocksdb::ColumnFamilyHandle* cf) {
   rocksdb::Status s;
   rocksdb::Options options(db_->GetOptions());
@@ -145,41 +135,11 @@ bool ShardMigrator::ReadChunk(pb::MigrateResponse* response) {
   return true;
 }
 
-void RequestShard(Info* info, rocksdb::DB* db,
-                  std::unordered_map<int, rocksdb::ColumnFamilyHandle*>* cfs,
-                  const std::string& address, int shard, void* call) {
-  pb::MigrateRequest request;
-  pb::MigrateResponse response;
-  grpc::ClientContext context;
-
-  std::unique_ptr<pb::RPC::Stub> stub(pb::RPC::NewStub(
-      grpc::CreateChannel(address, grpc::InsecureChannelCredentials())));
-
-  request.set_shard(shard);
-  std::unique_ptr<grpc::ClientReaderInterface<pb::MigrateResponse>> reader =
-      stub->Migrate(&context, request);
-
-  // The server that is sending the shard is supposed to pass ownership to us
-  while (info->IndexForShard(shard) != info->id()) {
-    bool ret = info->WatchNext(call);
-    assert(!ret);
-  }
-
-  ShardImporter importer(db, shard);
-  while (reader->Read(&response))
-    importer.WriteChunk(response);
-
-  importer.Finish(info, cfs->at(shard));
-  EnsureRpc(reader->Finish());
-}
-
-// ShardImporter
 ShardImporter::ShardImporter(rocksdb::DB* db, int shard)
-    : db_(db), num_(0), shard_(shard), empty_(false) {}
+    : db_(db), num_(0), shard_(shard) {}
 
 void ShardImporter::WriteChunk(const pb::MigrateResponse& response) {
   if (response.empty()) {
-    empty_ = true;
     // If the shard is empty, WriteChunk is supposed to be called only once
     assert(num_ == 0 && !out_.is_open());
     return;
@@ -203,66 +163,11 @@ void ShardImporter::WriteChunk(const pb::MigrateResponse& response) {
     out_.close();
 }
 
-void ShardImporter::Finish(Info* info, rocksdb::ColumnFamilyHandle* cf) {
-  if (empty_) {
-    std::cout << info->id() << ": Shard " << shard_ << " was empty"
-              << std::endl;
-  } else {
-    assert(info->IsImporting(shard_));
-    IngestShard(cf);
-    std::cout << info->id() << ": Succesfully ingested shard " << shard_
-              << " from " << num_ << " SST files" << std::endl;
-  }
-  info->SetImported(shard_);
-}
-
-void ShardImporter::IngestShard(rocksdb::ColumnFamilyHandle* cf) {
-  rocksdb::Status s;
-  rocksdb::Options options(db_->GetOptions());
-  rocksdb::IngestExternalFileOptions ifo;
-  ifo.move_files = true;
-
+std::vector<std::string> ShardImporter::Files() {
   std::vector<std::string> files;
   for (int i = 0; i < num_; i++)
     files.push_back(Filename(db_->GetName(), shard_, i));
-
-  s = db_->IngestExternalFile(cf, files, ifo);
-  EnsureRocksdb("IngestExternalFile", s);
-}
-
-void WatchThread(Info* info, rocksdb::DB* db,
-                 std::unordered_map<int, rocksdb::ColumnFamilyHandle*>* cfs,
-                 void* call) {
-  for (;;) {
-    if (info->WatchNext(call))
-      return;
-
-    info->UpdateIndex();
-    if (info->id() == -1)
-      continue;
-
-    std::vector<int> future = info->future();
-    if (future.size() == 0)
-      continue;
-
-    for (int shard : future)
-      info->SetImporting(shard);
-    AddColumnFamilies(future, db, cfs);
-
-    info->UpdateTasks();
-    for (const auto& task : info->tasks()) {
-      std::string address = info->Address(task.first);
-      for (int shard : task.second)
-        RequestShard(info, db, cfs, address, shard, call);
-    }
-
-    if (info->NoMigrations()) {
-      std::cout << info->id()
-                << ": Migrations are over. Switching back to RUNNING."
-                << std::endl;
-      info->Run();
-    }
-  }
+  return files;
 }
 
 }  // namespace crocks

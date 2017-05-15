@@ -20,7 +20,7 @@
 
 #include <fstream>
 #include <string>
-#include <unordered_map>
+#include <vector>
 
 namespace rocksdb {
 class DB;
@@ -33,13 +33,7 @@ namespace pb {
 class MigrateResponse;
 }
 
-class Info;
-
 std::string Filename(const std::string& path, int shard, int num);
-
-void WatchThread(Info* info, rocksdb::DB* db,
-                 std::unordered_map<int, rocksdb::ColumnFamilyHandle*>* cfs,
-                 void* call);
 
 class ShardMigrator {
  public:
@@ -61,27 +55,19 @@ class ShardMigrator {
   bool done_;
 };
 
-// TODO: Move to ShardImporter
-void RequestShard(Info* info, rocksdb::DB* db,
-                  std::unordered_map<int, rocksdb::ColumnFamilyHandle*>* cfs,
-                  const std::string& address, int shard, void* call);
-
 class ShardImporter {
  public:
   ShardImporter(rocksdb::DB* db, int shard);
 
   void WriteChunk(const pb::MigrateResponse& response);
 
-  void Finish(Info* info, rocksdb::ColumnFamilyHandle* cf);
+  std::vector<std::string> Files();
 
  private:
-  void IngestShard(rocksdb::ColumnFamilyHandle* cf);
-
   rocksdb::DB* db_;
   std::ofstream out_;
   int num_;
   int shard_;
-  bool empty_;
 };
 
 }  // namespace crocks

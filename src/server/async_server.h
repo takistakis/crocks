@@ -21,7 +21,6 @@
 #include <memory>
 #include <string>
 #include <thread>
-#include <unordered_map>
 
 #include <rocksdb/options.h>
 
@@ -30,7 +29,6 @@
 
 namespace rocksdb {
 class DB;
-class ColumnFamilyHandle;
 }
 
 namespace grpc {
@@ -39,6 +37,8 @@ class ServerCompletionQueue;
 }
 
 namespace crocks {
+
+class Shards;
 
 class AsyncServer final {
  public:
@@ -52,6 +52,8 @@ class AsyncServer final {
   void Run();
 
  private:
+  void WatchThread();
+
   std::string dbpath_;
   pb::RPC::AsyncService service_;
   std::unique_ptr<grpc::Server> server_;
@@ -59,7 +61,7 @@ class AsyncServer final {
   rocksdb::DB* db_;
   rocksdb::Options options_;
   Info info_;
-  std::unordered_map<int, rocksdb::ColumnFamilyHandle*> cfs_;
+  Shards* shards_;
   void* call_ = nullptr;
   std::thread watcher_;
 };

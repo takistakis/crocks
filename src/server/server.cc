@@ -20,6 +20,7 @@
 #include <iostream>
 #include <thread>
 #include <utility>
+#include <vector>
 
 #include <rocksdb/status.h>
 #include <rocksdb/write_batch.h>
@@ -49,7 +50,7 @@ Service::~Service() {
 
 void Service::Init(const std::string& address) {
   info_.Add(address);
-  AddColumnFamilies(info_.Shards(), db_, &cfs_);
+  AddColumnFamilies(info_.shards(), db_, &cfs_);
   call_ = info_.Watch();
   // Create a thread that watches the "info" key and repeatedly
   // reads for updates. Gets cleaned up by the destructor.
@@ -147,7 +148,10 @@ grpc::Status Service::Iterator(
   pb::IteratorRequest request;
   pb::IteratorResponse response;
   // https://github.com/facebook/rocksdb/wiki/Basic-Operations#iteration
-  MultiIterator* it = new MultiIterator(db_, cfs_);
+  std::vector<rocksdb::ColumnFamilyHandle*> column_families;
+  for (const auto& pair : cfs_)
+    column_families.push_back(pair.second);
+  MultiIterator* it = new MultiIterator(db_, column_families);
   while (stream->Read(&request)) {
     response.Clear();
     ApplyIteratorRequest(it, request, &response);

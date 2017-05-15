@@ -18,8 +18,8 @@
 #include "src/common/info.h"
 
 #include <assert.h>
+#include <stdlib.h>
 
-#include <algorithm>
 #include <iostream>
 #include <sstream>
 #include <vector>
@@ -65,23 +65,6 @@ std::string ListToString(const T& list) {
 
 Info::Info(const std::string& address) : etcd_(address) {}
 
-void Info::UpdateIndex() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  int i = 0;
-  for (const auto& node : info_.nodes()) {
-    if (node.address() == address_) {
-      if (id_ != i) {
-        std::cout << id_ << ": Index changed to " << i << std::endl;
-        id_ = i;
-      }
-      return;
-    }
-    i++;
-  }
-  // If address was not found assign -1 to indicate removed
-  id_ = -1;
-}
-
 void Info::Get() {
   std::string info;
   etcd_.Get(kInfoKey, &info);
@@ -94,21 +77,22 @@ void Info::Add(const std::string& address) {
     std::string old_info;
     if (etcd_.Get(kInfoKey, &old_info)) {
       Parse(old_info);
-      if (info_.state() == pb::ClusterInfo::INIT) {
-        AddWithNewShards(address);
-      } else if (info_.state() == pb::ClusterInfo::RUNNING) {
-        pb::NodeInfo* node = info_.add_nodes();
-        node->set_address(address);
-      } else if (info_.state() == pb::ClusterInfo::MIGRATING) {
+      if (info_.IsInit()) {
+        info_.AddNodeWithNewShards(address);
+      } else if (info_.IsRunning()) {
+        info_.AddNode(address);
+      } else if (info_.IsMigrating()) {
         std::cout << "Migrating. Try again later." << std::endl;
         exit(EXIT_FAILURE);
       }
-      succeeded = etcd_.TxnPutIfValueEquals(kInfoKey, Serialize(), old_info);
+      succeeded =
+          etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
     } else {
-      AddWithNewShards(address);
-      succeeded = etcd_.TxnPutIfKeyMissing(kInfoKey, Serialize());
+      info_.AddNodeWithNewShards(address);
+      succeeded = etcd_.TxnPutIfKeyMissing(kInfoKey, info_.Serialize());
     }
   } while (!succeeded);
+  UpdateMap();
   // Set the index and address of the new node
   id_ = num_nodes() - 1;
   address_ = address;
@@ -119,10 +103,24 @@ void Info::Remove(const std::string& address) {
   do {
     Get();
     assert(IsRunning());
-    std::string old_info = Serialize();
-    RemoveNode(address);
-    succeeded = etcd_.TxnPutIfValueEquals(kInfoKey, Serialize(), old_info);
+    std::string old_info = info_.Serialize();
+    info_.MarkRemoveNode(address);
+    succeeded =
+        etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
+}
+
+void Info::Remove() {
+  bool succeeded;
+  do {
+    Get();
+    std::string old_info = info_.Serialize();
+    info_.RemoveNode(id_);
+    succeeded =
+        etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
+  } while (!succeeded);
+  UpdateMap();
+  UpdateIndex();
 }
 
 void Info::Run() {
@@ -134,8 +132,9 @@ void Info::Run() {
     if (!etcd_.Get(kInfoKey, &old_info))
       return;
     Parse(old_info);
-    info_.set_state(pb::ClusterInfo::RUNNING);
-    succeeded = etcd_.TxnPutIfValueEquals(kInfoKey, Serialize(), old_info);
+    info_.SetRunning();
+    succeeded =
+        etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
 }
 
@@ -146,234 +145,15 @@ void Info::Migrate() {
     if (!etcd_.Get(kInfoKey, &old_info))
       return;
     Parse(old_info);
-    RedistributeShards();
-    info_.set_state(pb::ClusterInfo::MIGRATING);
-    succeeded = etcd_.TxnPutIfValueEquals(kInfoKey, Serialize(), old_info);
+    info_.RedistributeShards();
+    if (info_.NoMigrations()) {
+      std::cout << "There was nothing to migrate" << std::endl;
+      return;
+    }
+    info_.SetMigrating();
+    succeeded =
+        etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
-}
-
-void Info::Print() {
-  switch (info_.state()) {
-    case pb::ClusterInfo::INIT:
-      std::cout << "state: INIT" << std::endl;
-      break;
-    case pb::ClusterInfo::RUNNING:
-      std::cout << "state: RUNNING" << std::endl;
-      break;
-    case pb::ClusterInfo::MIGRATING:
-      std::cout << "state: MIGRATING" << std::endl;
-      break;
-    case pb::ClusterInfo::SHUTDOWN:
-      std::cout << "state: SHUTDOWN" << std::endl;
-      break;
-    default:
-      assert(false);
-  }
-  std::cout << "nodes: " << num_nodes() << std::endl;
-  std::cout << "shards: " << num_shards() << std::endl;
-  int i = 0;
-  for (const auto& node : info_.nodes()) {
-    std::cout << "node " << i << ":" << std::endl;
-    std::cout << "  address: " << node.address() << std::endl;
-    if (node.shards_size() > 0)
-      std::cout << "  shards: " << ListToString(node.shards()) << std::endl;
-    else
-      std::cout << "  shards: none" << std::endl;
-    if (node.future_size() > 0)
-      std::cout << "  future: " << ListToString(node.future()) << std::endl;
-    if (node.remove())
-      std::cout << "  remove: true" << std::endl;
-
-    i++;
-  }
-}
-
-void Info::RedistributeShards() {
-  std::cout << "Redistributing shards" << std::endl;
-
-  std::vector<bool> skip;
-  for (int i = 0; i < num_nodes(); i++) {
-    auto node = info_.nodes(i);
-    skip.push_back(node.remove() ? true : false);
-  }
-
-  std::vector<int> targets = Distribute(num_shards(), num_nodes(), skip);
-
-  // Calculate diffs
-  // Positive diff: the node has diff shards to give
-  // Negative diff: the node has -diff shards to get
-  std::vector<int> diffs;
-  for (int i = 0; i < num_nodes(); i++) {
-    auto node = info_.nodes(i);
-    diffs.push_back(node.shards_size() + node.future_size() - targets[i]);
-  }
-
-  for (int i = 0; i < num_nodes() - 1; i++) {
-    pb::NodeInfo* left = info_.mutable_nodes(i);
-    for (int j = i + 1; j < num_nodes(); j++) {
-      pb::NodeInfo* right = info_.mutable_nodes(j);
-      while (diffs[i] > 0 && diffs[j] < 0) {
-        int shard = left->shards(diffs[i] - 1);
-        diffs[i]--;
-        right->add_future(shard);
-        diffs[j]++;
-      }
-      while (diffs[j] > 0 && diffs[i] < 0) {
-        int shard = right->shards(diffs[j] - 1);
-        diffs[j]--;
-        left->add_future(shard);
-        diffs[i]++;
-      }
-    }
-  }
-
-  for (int i = 0; i < num_nodes(); i++) {
-    auto node = info_.mutable_nodes(i);
-    std::sort(node->mutable_future()->begin(), node->mutable_future()->end());
-  }
-
-  for (int i = 0; i < num_nodes(); i++) {
-    auto node = info_.nodes(i);
-    if (node.future_size() > 0)
-      assert(node.shards_size() + node.future_size() == targets[i]);
-  }
-}
-
-// private
-std::string Info::Serialize() const {
-  std::string str;
-  bool ok = info_.SerializeToString(&str);
-  assert(ok);
-  return str;
-}
-
-void Info::Parse(const std::string& str) {
-  bool ok = info_.ParseFromString(str);
-  assert(ok);
-  UpdateMap();
-}
-
-void Info::AddWithNewShards(const std::string& address) {
-  pb::NodeInfo* node = info_.add_nodes();
-  node->set_address(address);
-  for (int i = num_shards(); i < num_shards() + kShardsPerNode; i++)
-    node->add_shards(i);
-  info_.set_num_shards(num_shards() + kShardsPerNode);
-  UpdateMap();
-}
-
-void Info::RemoveNode(const std::string& address) {
-  // Remove the node from the list
-  pb::NodeInfo* node;
-  bool found = false;
-  for (int i = 0; i < num_nodes(); i++) {
-    if (info_.nodes(i).address() == address) {
-      node = info_.mutable_nodes(i);
-      found = true;
-      break;
-    }
-  }
-  assert(found);
-  node->set_remove(true);
-}
-
-void Info::Remove() {
-  bool succeeded;
-  do {
-    Get();
-    std::string old_info = Serialize();
-    info_.mutable_nodes()->SwapElements(id_, num_nodes() - 1);
-    info_.mutable_nodes()->RemoveLast();
-    succeeded = etcd_.TxnPutIfValueEquals(kInfoKey, Serialize(), old_info);
-  } while (!succeeded);
-}
-
-std::vector<int> Info::Distribute(int s, int n, const std::vector<bool>& skip) {
-  // Romoved nodes get 0 shards. For the rest, each pair must have the same
-  // number of shards, or a difference of one shard. Let s be the number of
-  // shards and n the number of nodes. Each node will be assigned either n/s
-  // or n/s+1 shards and all shards will have to add up to s. We achieve
-  // that by giving the first n%s nodes n/s+1 shards and the rest just n/s.
-  int N = n;
-  for (bool b : skip)
-    if (b)
-      n--;
-  std::vector<int> vec;
-  int j = 0;
-  for (int i = 0; i < N; i++) {
-    if (skip[i]) {
-      vec.push_back(0);
-      continue;
-    }
-    if (j < s % n)
-      vec.push_back(s / n + 1);
-    else
-      vec.push_back(s / n);
-    j++;
-  }
-  return vec;
-}
-
-void Info::UpdateMap() {
-  int i = 0;
-  for (const auto& node : info_.nodes()) {
-    for (int shard : node.shards())
-      map_[shard] = i;
-    i++;
-  }
-}
-
-void Info::UpdateTasks() {
-  tasks_.clear();
-  for (int shard : info_.nodes(id_).future()) {
-    int current_master = map_[shard];
-    tasks_[current_master].push_back(shard);
-  }
-}
-
-void Info::GiveShard(int shard) {
-  bool succeeded;
-  do {
-    Get();
-    std::string old_info = Serialize();
-    DoGiveShard(shard);
-    succeeded = etcd_.TxnPutIfValueEquals(kInfoKey, Serialize(), old_info);
-  } while (!succeeded);
-}
-
-void Info::DoGiveShard(int shard) {
-  // Remove shard from my shards
-  auto node = info_.mutable_nodes(id_);
-  for (int i = 0; i < node->shards_size(); i++) {
-    if (node->shards(i) == shard) {
-      node->mutable_shards()->SwapElements(i, node->shards_size() - 1);
-      node->mutable_shards()->RemoveLast();
-      std::sort(node->mutable_shards()->begin(), node->mutable_shards()->end());
-      break;
-    }
-  }
-
-  // Put shard into new master's future shards
-  for (int i = 0; i < info_.nodes_size(); i++) {
-    auto node = info_.mutable_nodes(i);
-    for (int j = 0; j < node->future_size(); j++) {
-      if (node->future(j) == shard) {
-        node->mutable_future()->SwapElements(j, node->future_size() - 1);
-        node->mutable_future()->RemoveLast();
-        node->add_shards(shard);
-        std::sort(node->mutable_shards()->begin(),
-                  node->mutable_shards()->end());
-        return;
-      }
-    }
-  }
-}
-
-bool Info::NoMigrations() {
-  for (const auto& node : info_.nodes())
-    if (node.future_size() > 0)
-      return false;
-  return true;
 }
 
 void* Info::Watch() {
@@ -386,15 +166,78 @@ void* Info::Watch() {
 bool Info::WatchNext(void* call) {
   std::string info;
   bool canceled = etcd_.WatchNext(call, &info);
-  if (!canceled) {
-    std::lock_guard<std::mutex> lock(mutex_);
+  if (!canceled)
     Parse(info);
-  }
   return canceled;
 }
 
 void Info::WatchCancel(void* call) {
   etcd_.WatchCancel(call);
+}
+
+std::unordered_map<std::string, std::vector<int>> Info::Tasks() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::unordered_map<std::string, std::vector<int>> tasks;
+  for (int shard : info_.future(id_))
+    tasks[info_.Address(map_[shard])].push_back(shard);
+  return tasks;
+}
+
+void Info::GiveShard(int shard) {
+  bool succeeded;
+  do {
+    Get();
+    std::string old_info = info_.Serialize();
+    info_.GiveShard(id_, shard);
+    succeeded =
+        etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
+  } while (!succeeded);
+}
+
+void Info::Print() {
+  if (info_.IsInit())
+    std::cout << "state: INIT" << std::endl;
+  else if (info_.IsRunning())
+    std::cout << "state: RUNNING" << std::endl;
+  else if (info_.IsMigrating())
+    std::cout << "state: MIGRATING" << std::endl;
+  else
+    assert(false);
+  std::cout << "nodes: " << num_nodes() << std::endl;
+  std::cout << "shards: " << num_shards() << std::endl;
+  for (int i = 0; i < num_nodes(); i++) {
+    std::cout << "node " << i << ":" << std::endl;
+    std::cout << "  address: " << info_.Address(i) << std::endl;
+    auto shards = info_.shards(i);
+    if (shards.size() > 0)
+      std::cout << "  shards: " << ListToString(shards) << " (" << shards.size()
+                << ")" << std::endl;
+    auto future = info_.future(i);
+    if (future.size() > 0)
+      std::cout << "  future: " << ListToString(future) << " (" << future.size()
+                << ")" << std::endl;
+    if (info_.IsRemoved(i))
+      std::cout << "  remove: true" << std::endl;
+  }
+}
+
+void Info::UpdateMap() {
+  for (int i = 0; i < num_nodes(); i++) {
+    auto shards = info_.shards(i);
+    for (int shard : shards)
+      map_[shard] = i;
+  }
+}
+
+void Info::UpdateIndex() {
+  if (id_ == -1)
+    return;
+  int new_id = info_.IndexOf(address_);
+  if (id_ != new_id) {
+    if (new_id != -1)
+      std::cerr << id_ << ": Index changed to " << new_id << std::endl;
+    id_ = new_id;
+  }
 }
 
 }  // namespace crocks

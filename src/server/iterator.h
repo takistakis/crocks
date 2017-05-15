@@ -69,13 +69,9 @@ typedef Heap<rocksdb::Iterator, RocksdbIteratorLess> MaxHeap;
 
 class MultiIterator {
  public:
-  MultiIterator(
-      rocksdb::DB* db,
-      const std::unordered_map<int, rocksdb::ColumnFamilyHandle*>& cfs) {
-    std::vector<rocksdb::ColumnFamilyHandle*> column_families;
-    for (const auto& pair : cfs)
-      column_families.push_back(pair.second);
-    db->NewIterators(rocksdb::ReadOptions(), column_families, &iters_);
+  MultiIterator(rocksdb::DB* db,
+                const std::vector<rocksdb::ColumnFamilyHandle*>& cfs) {
+    db->NewIterators(rocksdb::ReadOptions(), cfs, &iters_);
   }
 
   ~MultiIterator() {

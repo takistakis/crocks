@@ -38,6 +38,10 @@ class Node {
  public:
   Node(const std::string& address);
 
+  std::string address() const {
+    return address_;
+  }
+
   Status Get(const std::string& key, std::string* value);
   Status Put(const std::string& key, const std::string& value);
   Status Delete(const std::string& key);
@@ -57,6 +61,7 @@ class Node {
 
  private:
   std::unique_ptr<pb::RPC::Stub> stub_;
+  std::string address_;
 };
 
 }  // namespace crocks
