@@ -24,11 +24,9 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
-#include <mutex>
 #include <utility>
 #include <vector>
 
-#include <grpc++/grpc++.h>
 #include <rocksdb/db.h>
 #include <rocksdb/status.h>
 #include <rocksdb/write_batch.h>
@@ -42,12 +40,16 @@
 
 std::atomic<bool> shutdown(false);
 
-std::mutex mutex_;
-
 namespace crocks {
 
+// gRPC status indicating that the shard belongs to another node
 const grpc::Status invalid_status(grpc::StatusCode::INVALID_ARGUMENT,
                                   "Not responsible for this shard");
+
+// RocksDB status indicating that the shard used to
+// belong to this node but now has been deleted.
+const rocksdb::Status deleted_status(
+    rocksdb::Status::InvalidArgument("Shard already deleted"));
 
 // Simple POD struct used as an argument wrapper for calls
 struct CallData {
@@ -77,7 +79,7 @@ class GetCall final : public Call {
   void Proceed(bool ok) {
     rocksdb::Status s;
     std::string value;
-    int shard;
+    int shard_id;
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
       std::cerr << "Get request cancelled. Finishing." << std::endl;
@@ -95,16 +97,11 @@ class GetCall final : public Call {
           status_ = FINISH;
           break;
         }
-        shard = data_->info->ShardForKey(request_.key());
-        if (request_.force()) {
-          s = ForceGet(shard, request_.key(), &value);
-          response_.set_status(RocksdbStatusCodeToInt(s.code()));
-          response_.set_value(value);
-          responder_.Finish(response_, grpc::Status::OK, this);
-        } else if (data_->info->WrongShard(shard)) {
+        shard_id = data_->info->ShardForKey(request_.key());
+        if (data_->info->WrongShard(shard_id) && !request_.force()) {
           responder_.FinishWithError(invalid_status, this);
         } else {
-          s = Get(shard, request_.key(), &value);
+          s = Get(shard_id, request_.key(), &value);
           response_.set_status(RocksdbStatusCodeToInt(s.code()));
           response_.set_value(value);
           responder_.Finish(response_, grpc::Status::OK, this);
@@ -120,54 +117,26 @@ class GetCall final : public Call {
 
   rocksdb::Status Get(int shard_id, const std::string& key,
                       std::string* value) {
-    rocksdb::Status s;
     Shard* shard = data_->shards->at(shard_id);
+    bool ask;
+    rocksdb::Status s = shard->Get(key, value, &ask);
+    if (!ask)
+      return s;
 
-    {
-      std::lock_guard<std::mutex> lock(mutex_);
-      if (!shard->importing())
-        return shard->Get(key, value);
-      // I'm the master of the shard but not have ingested all of it yet
-      s = shard->GetFromBatch(key, value);
-      if (s.ok())
-        return s;
-      assert(s.IsNotFound());
-    }
-
-    std::cerr << data_->info->id() << ": Importing " << shard_id
-              << ". Key not in the batch. Asking the former master."
-              << std::endl;
+    std::cerr << data_->info->id() << ": Asking the former master" << std::endl;
 
     // TODO: This should happen in the background
     s = RequestForceGet(shard->old_address(), key, value);
 
     // If he replied with invalid argument, we must have ingested by now
     if (s.IsInvalidArgument()) {
-      std::lock_guard<std::mutex> lock(mutex_);
       assert(!shard->importing());
-      std::cerr << data_->info->id()
-                << ": While waiting for RequestForceGet to return, importing "
-                << shard_id << " finished." << std::endl;
-      s = shard->Get(key, value);
+      std::cerr << data_->info->id() << ": Meanwhile importing finished"
+                << std::endl;
+      s = shard->Get(key, value, &ask);
+      assert(!ask);
     }
     return s;
-  }
-
-  rocksdb::Status ForceGet(int shard_id, const std::string& key,
-                           std::string* value) {
-    int id = data_->info->id();
-    std::cerr << id << ": ForceGet request for shard " << shard_id << std::endl;
-    std::lock_guard<std::mutex> lock(mutex_);
-
-    if (!data_->shards->has(shard_id)) {
-      std::cerr << id << ": Shard " << shard_id << " already deleted."
-                << std::endl;
-      return rocksdb::Status::InvalidArgument("Shard already deleted");
-    }
-
-    Shard* shard = data_->shards->at(shard_id);
-    assert(!shard->importing());
-    return shard->Get(key, value);
   }
 
   rocksdb::Status RequestForceGet(const std::string& address,
@@ -179,37 +148,18 @@ class GetCall final : public Call {
     pb::Response response;
     request.set_key(key);
     request.set_force(true);
-
-    int id = data_->info->id();
     grpc::Status status = stub->Get(&context, request, &response);
 
     // If gRPC failed, the server must have shut down and if
     // RocksDB status is INVALID_ARGUMENT, he has deleted
     // the shard. Either way, we return INVALID_ARGUMENT.
-    if (!status.ok()) {
-      std::cerr << data_->info->id() << ": He had shut down" << std::endl;
-      return rocksdb::Status::InvalidArgument("Shard already deleted");
-    }
-
-    if (response.status() == 4) {
-      std::cerr << id << ": He had deleted the shard" << std::endl;
-      return rocksdb::Status::InvalidArgument("Shard already deleted");
-    }
-
+    if (!status.ok())
+      return deleted_status;
+    rocksdb::Status s = IntToRocksdbStatus(response.status());
+    if (s.IsInvalidArgument())
+      return deleted_status;
     *value = response.value();
-
-    if (response.status() == 0) {
-      std::cerr << id << ": Got " << *value << std::endl;
-      return rocksdb::Status::OK();
-
-    } else if (response.status() == 1) {
-      std::cerr << id << ": Not found" << std::endl;
-      return rocksdb::Status::NotFound("Not found");
-
-    } else {
-      std::cerr << id << ": Another status" << std::endl;
-      return rocksdb::Status::OK();
-    }
+    return s;
   }
 
   void Delete() {
@@ -236,6 +186,8 @@ class PutCall final : public Call {
 
   void Proceed(bool ok) {
     rocksdb::Status s;
+    int shard_id;
+    Shard* shard;
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
       std::cerr << "Put request cancelled. Finishing." << std::endl;
@@ -253,16 +205,15 @@ class PutCall final : public Call {
           status_ = FINISH;
           break;
         }
-        {
-          std::lock_guard<std::mutex> lock(mutex_);
-          int shard = data_->info->ShardForKey(request_.key());
-          if (data_->info->WrongShard(shard)) {
-            responder_.FinishWithError(invalid_status, this);
-          } else {
-            s = data_->shards->at(shard)->Put(request_.key(), request_.value());
-            response_.set_status(RocksdbStatusCodeToInt(s.code()));
-            responder_.Finish(response_, grpc::Status::OK, this);
-          }
+        shard_id = data_->info->ShardForKey(request_.key());
+        shard = data_->shards->Ref(shard_id);
+        if (shard == nullptr) {
+          responder_.FinishWithError(invalid_status, this);
+        } else {
+          s = shard->Put(request_.key(), request_.value());
+          shard->Unref();
+          response_.set_status(RocksdbStatusCodeToInt(s.code()));
+          responder_.Finish(response_, grpc::Status::OK, this);
         }
         status_ = FINISH;
         break;
@@ -297,7 +248,8 @@ class DeleteCall final : public Call {
 
   void Proceed(bool ok) {
     rocksdb::Status s;
-    int shard;
+    int shard_id;
+    Shard* shard;
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
       std::cerr << "Delete request cancelled. Finishing." << std::endl;
@@ -315,11 +267,13 @@ class DeleteCall final : public Call {
           status_ = FINISH;
           break;
         }
-        shard = data_->info->ShardForKey(request_.key());
-        if (data_->info->WrongShard(shard)) {
+        shard_id = data_->info->ShardForKey(request_.key());
+        shard = data_->shards->Ref(shard_id);
+        if (shard == nullptr) {
           responder_.FinishWithError(invalid_status, this);
         } else {
-          s = data_->shards->at(shard)->Delete(request_.key());
+          s = shard->Delete(request_.key());
+          shard->Unref();
           response_.set_status(RocksdbStatusCodeToInt(s.code()));
           responder_.Finish(response_, grpc::Status::OK, this);
         }
@@ -523,6 +477,8 @@ class MigrateCall final : public Call {
     rocksdb::Status s;
     pb::MigrateResponse response;
     bool retval;
+    int shard_id;
+    Shard* shard;
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
       std::cerr << "Migrate request cancelled. Finishing." << std::endl;
@@ -540,13 +496,22 @@ class MigrateCall final : public Call {
           status_ = FINISH;
           break;
         }
-
-        std::cerr << data_->info->id() << ": Migrating shard "
-                  << request_.shard() << std::endl;
-        data_->info->GiveShard(request_.shard());
+        shard_id = request_.shard();
+        std::cerr << data_->info->id() << ": Migrating shard " << shard_id
+                  << std::endl;
+        shard = data_->shards->at(shard_id);
+        shard->set_removing(true);
+        data_->info->GiveShard(shard_id);
+        // From now on requests for the shard are rejected
         migrator_ = std::unique_ptr<ShardMigrator>(
-            new ShardMigrator(data_->db, request_.shard()));
-        migrator_->DumpShard(data_->shards->at(request_.shard())->cf());
+            new ShardMigrator(data_->db, shard_id));
+        // DumpShard creates SST files by iterating on the shard.
+        // We can't modify the database after the iterator snapshot
+        // is taken, and there may be some unfinished requests.
+        // So we wait for the reference counter to reach 0.
+        shard->Unref();
+        shard->WaitRefs();
+        migrator_->DumpShard(shard->cf());
         retval = migrator_->ReadChunk(&response);
         assert(retval);
         writer_.Write(response, this);
@@ -564,6 +529,10 @@ class MigrateCall final : public Call {
         break;
 
       case FINISH:
+        // Wait for a while to be sure that any pending forced
+        // get requests have been answered. This could also
+        // be achieved with a different reference counter.
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
         data_->shards->Remove(request_.shard());
         if (data_->shards->empty()) {
           data_->info->Remove();
@@ -663,22 +632,10 @@ void AsyncServer::WatchThread() {
     if (info_.IsMigrating() && info_.NoMigrations())
       info_.Run();
 
-    // If removed, the server cancels the watch so we keep
-    // continuing and calling WatchNext until it returns true.
-    if (info_.id() == -1)
-      continue;
-
-    if (info_.future().empty())
-      continue;
-
     for (const auto& task : info_.Tasks()) {
       std::string address = task.first;
       for (int shard_id : task.second) {
-        Shard* shard;
-        {
-          std::lock_guard<std::mutex> lock(mutex_);
-          shard = shards_->Add(shard_id, address);
-        }
+        Shard* shard = shards_->Add(shard_id, address);
 
         pb::MigrateRequest request;
         pb::MigrateResponse response;
@@ -691,30 +648,28 @@ void AsyncServer::WatchThread() {
         std::unique_ptr<grpc::ClientReaderInterface<pb::MigrateResponse>>
             reader = stub->Migrate(&context, request);
 
-        // Once the old master gets the request, he is is supposed to
-        // pass ownership to us by informing etcd. We wait for that, so
-        // that we can start serving requests for that shard immediately.
+        // Once the old master gets the request, he is supposed to pass
+        // ownership to us by informing etcd. We wait for that, so that
+        // we can start serving requests for that shard immediately.
         while (info_.IndexForShard(shard_id) != info_.id()) {
           bool ret = info_.WatchNext(call_);
           assert(!ret);
         }
+        // From now on requests for the shard are accepted
 
         ShardImporter importer(db_, shard_id);
         while (reader->Read(&response))
           importer.WriteChunk(response);
         EnsureRpc(reader->Finish());
 
-        {
-          std::lock_guard<std::mutex> lock(mutex_);
-          std::vector<std::string> files = importer.Files();
-          shard->Ingest(files);
-          if (files.empty())
-            std::cerr << info_.id() << ": Shard " << shard_id << " was empty"
-                      << std::endl;
-          else
-            std::cerr << info_.id() << ": Imported shard " << shard_id
-                      << std::endl;
-        }
+        std::vector<std::string> files = importer.Files();
+        shard->Ingest(files);
+        if (files.empty())
+          std::cerr << info_.id() << ": Shard " << shard_id << " was empty"
+                    << std::endl;
+        else
+          std::cerr << info_.id() << ": Imported shard " << shard_id
+                    << std::endl;
       }
     }
 

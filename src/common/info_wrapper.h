@@ -48,6 +48,7 @@ class InfoWrapper {
   std::vector<int> shards(int id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<int> shards;
+    assert(id >= 0 && id < info_.nodes_size());
     for (int shard : info_.nodes(id).shards())
       shards.push_back(shard);
     return shards;
@@ -56,6 +57,7 @@ class InfoWrapper {
   std::vector<int> future(int id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<int> future;
+    assert(id >= 0 && id < info_.nodes_size());
     for (int shard : info_.nodes(id).future())
       future.push_back(shard);
     return future;

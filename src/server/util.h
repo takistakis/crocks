@@ -41,7 +41,9 @@ class IteratorResponse;
 
 class MultiIterator;
 
-int RocksdbStatusCodeToInt(const rocksdb::Status::Code& status);
+int RocksdbStatusCodeToInt(const rocksdb::Status::Code& code);
+
+rocksdb::Status IntToRocksdbStatus(int value);
 
 // Exit unsuccessfully in case of RocksDB failure
 void EnsureRocksdb(const std::string& what, const rocksdb::Status& status);

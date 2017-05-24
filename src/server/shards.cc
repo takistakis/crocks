@@ -17,20 +17,47 @@
 
 #include "src/server/shards.h"
 
+#include <assert.h>
+
+#include <utility>
+
+#include <rocksdb/db.h>
+#include <rocksdb/options.h>
+#include <rocksdb/utilities/write_batch_with_index.h>
+
+#include "src/server/util.h"
+
 namespace crocks {
 
-rocksdb::Status Shard::Get(const std::string& key, std::string* value) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (importing_)
-    return newer_->GetFromBatch(cf_, db_->GetOptions(), key, value);
-  else
-    return db_->Get(rocksdb::ReadOptions(), cf_, key, value);
+Shard::Shard(rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf, int shard)
+    : db_(db), cf_(cf), importing_(false) {}
+
+Shard::Shard(rocksdb::DB* db, int shard, const std::string& old_address)
+    : db_(db), importing_(true), old_address_(old_address) {
+  rocksdb::Status s = db_->CreateColumnFamily(rocksdb::ColumnFamilyOptions(),
+                                              std::to_string(shard), &cf_);
+  EnsureRocksdb("CreateColumnFamily", s);
+  newer_ = new rocksdb::WriteBatchWithIndex();
 }
 
-rocksdb::Status Shard::GetFromBatch(const std::string& key,
-                                    std::string* value) {
+Shard::~Shard() {
+  db_->DropColumnFamily(cf_);
+  delete cf_;
+}
+
+rocksdb::Status Shard::Get(const std::string& key, std::string* value,
+                           bool* ask) {
   std::lock_guard<std::mutex> lock(mutex_);
-  return newer_->GetFromBatch(cf_, db_->GetOptions(), key, value);
+  rocksdb::Status s;
+  *ask = false;
+  if (importing_) {
+    s = newer_->GetFromBatch(cf_, db_->GetOptions(), key, value);
+    if (s.IsNotFound())
+      *ask = true;
+  } else {
+    s = db_->Get(rocksdb::ReadOptions(), cf_, key, value);
+  }
+  return s;
 }
 
 rocksdb::Status Shard::Put(const std::string& key, const std::string& value) {
@@ -68,6 +95,28 @@ void Shard::Ingest(const std::vector<std::string>& files) {
   importing_ = false;
 }
 
+bool Shard::Ref() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (removing_)
+    return false;
+  refs_++;
+  return true;
+}
+
+void Shard::Unref() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  refs_--;
+  if (refs_ == 0) {
+    assert(removing_);
+    zero_refs_.set_value();
+  }
+}
+
+void Shard::WaitRefs() {
+  std::future<void> f = zero_refs_.get_future();
+  f.wait();
+}
+
 Shards::Shards(rocksdb::DB* db, std::vector<int> shards) : db_(db) {
   std::vector<std::string> names;
   for (int shard : shards)
@@ -84,6 +133,40 @@ Shards::Shards(rocksdb::DB* db, std::vector<int> shards) : db_(db) {
 Shards::~Shards() {
   for (auto shard : shards_)
     delete shard.second;
+}
+
+Shard* Shards::Add(int id, const std::string& old_address) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  Shard* shard = new Shard(db_, id, old_address);
+  shards_[id] = shard;
+  return shard;
+}
+
+void Shards::Remove(int id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  delete shards_[id];
+  shards_.erase(id);
+}
+
+std::vector<rocksdb::ColumnFamilyHandle*> Shards::ColumnFamilies() const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::vector<rocksdb::ColumnFamilyHandle*> column_families;
+  for (const auto& pair : shards_) {
+    Shard* shard = pair.second;
+    column_families.push_back(shard->cf());
+  }
+  return column_families;
+}
+
+Shard* Shards::Ref(int id) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  if (shards_.find(id) == shards_.end())
+    return nullptr;
+  Shard* shard = shards_.at(id);
+  if (!shard->Ref())
+    return nullptr;
+  else
+    return shard;
 }
 
 }  // namespace crocks

@@ -22,6 +22,7 @@
 #include <string>
 #include <thread>
 
+#include <grpc++/grpc++.h>
 #include <rocksdb/options.h>
 
 #include "gen/crocks.grpc.pb.h"
@@ -29,11 +30,6 @@
 
 namespace rocksdb {
 class DB;
-}
-
-namespace grpc {
-class Server;
-class ServerCompletionQueue;
 }
 
 namespace crocks {

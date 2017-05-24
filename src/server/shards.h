@@ -18,39 +18,27 @@
 #ifndef CROCKS_SERVER_SHARDS_H
 #define CROCKS_SERVER_SHARDS_H
 
-#include <atomic>
+#include <future>
 #include <mutex>
 #include <string>
 #include <unordered_map>
-#include <utility>
 #include <vector>
 
-#include <rocksdb/db.h>
-#include <rocksdb/options.h>
 #include <rocksdb/status.h>
-#include <rocksdb/utilities/write_batch_with_index.h>
 
-#include "src/server/util.h"
+namespace rocksdb {
+class DB;
+class ColumnFamilyHandle;
+class WriteBatchWithIndex;
+}
 
 namespace crocks {
 
 class Shard {
  public:
-  Shard(rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf, int shard)
-      : db_(db), cf_(cf), importing_(false) {}
-
-  Shard(rocksdb::DB* db, int shard, const std::string& old_address)
-      : db_(db), importing_(true), old_address_(old_address) {
-    rocksdb::Status s = db_->CreateColumnFamily(rocksdb::ColumnFamilyOptions(),
-                                                std::to_string(shard), &cf_);
-    EnsureRocksdb("CreateColumnFamily", s);
-    newer_ = new rocksdb::WriteBatchWithIndex();
-  }
-
-  ~Shard() {
-    db_->DropColumnFamily(cf_);
-    delete cf_;
-  }
+  Shard(rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf, int shard);
+  Shard(rocksdb::DB* db, int shard, const std::string& old_address);
+  ~Shard();
 
   rocksdb::ColumnFamilyHandle* cf() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -62,24 +50,47 @@ class Shard {
     return importing_;
   }
 
+  void set_removing(bool value) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    removing_ = value;
+  }
+
   std::string old_address() const {
     std::lock_guard<std::mutex> lock(mutex_);
     return old_address_;
   }
 
-  rocksdb::Status Get(const std::string& key, std::string* value);
-  rocksdb::Status GetFromBatch(const std::string& key, std::string* value);
+  // Get the key from the appropriate place (db, batch or both), and put it
+  // into *value. If it was not found and there is a possibility that the
+  // former master of the shard has the most recent value, *ask is true.
+  rocksdb::Status Get(const std::string& key, std::string* value, bool* ask);
   rocksdb::Status Put(const std::string& key, const std::string& value);
   rocksdb::Status Delete(const std::string& key);
 
   void Ingest(const std::vector<std::string>& files);
+
+  // Increase the reference counter of the shard. Fails and returns
+  // false if the shard is marked for removal. A referenced
+  // shard is not allowed to be snapshotted and sent to a node.
+  // Should only be used for requests to modify the shard.
+  bool Ref();
+
+  // Decrease the reference counter of the shard
+  void Unref();
+
+  // Wait for the reference counter to reach 0
+  void WaitRefs();
 
  private:
   mutable std::mutex mutex_;
   rocksdb::DB* db_;
   rocksdb::ColumnFamilyHandle* cf_;
   rocksdb::WriteBatchWithIndex* newer_;
-  std::atomic<bool> importing_;
+  // TODO: Use std::atomic<bool> without the lock
+  bool importing_;
+  bool removing_{false};
+  int refs_{1};
+  std::promise<void> zero_refs_;
   std::string old_address_;
 };
 
@@ -98,32 +109,16 @@ class Shards {
     return shards_.empty();
   }
 
-  bool has(int id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return shards_.find(id) != shards_.end();
-  }
+  Shard* Add(int id, const std::string& old_address);
 
-  Shard* Add(int id, const std::string& old_address) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    Shard* shard = new Shard(db_, id, old_address);
-    shards_[id] = shard;
-    return shard;
-  }
+  void Remove(int id);
 
-  void Remove(int id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    delete shards_[id];
-    shards_.erase(id);
-  }
+  std::vector<rocksdb::ColumnFamilyHandle*> ColumnFamilies() const;
 
-  std::vector<rocksdb::ColumnFamilyHandle*> ColumnFamilies() {
-    std::vector<rocksdb::ColumnFamilyHandle*> column_families;
-    for (const auto& pair : shards_) {
-      Shard* shard = pair.second;
-      column_families.push_back(shard->cf());
-    }
-    return column_families;
-  }
+  // Increase the reference counter of the given shard. Return
+  // a pointer to the shard on success and nullptr if the shard
+  // does not belong to this node, or is about to be removed.
+  Shard* Ref(int id);
 
  private:
   mutable std::mutex mutex_;

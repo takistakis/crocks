@@ -23,6 +23,7 @@
 #include <iostream>
 #include <string>
 
+#include <rocksdb/advanced_options.h>
 #include <rocksdb/db.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/write_batch.h>
@@ -33,10 +34,46 @@
 
 namespace crocks {
 
-int RocksdbStatusCodeToInt(const rocksdb::Status::Code& status) {
-  int rocksdb_code = static_cast<int>(status);
-  assert(rocksdb_code >= 0 && rocksdb_code <= 13);
-  return rocksdb_code;
+int RocksdbStatusCodeToInt(const rocksdb::Status::Code& code) {
+  int value = static_cast<int>(code);
+  assert(value >= 0 && value <= 13);
+  return value;
+}
+
+rocksdb::Status IntToRocksdbStatus(int value) {
+  rocksdb::Status::Code code = static_cast<rocksdb::Status::Code>(value);
+  switch (code) {
+    case rocksdb::StatusCode::OK:
+      return rocksdb::Status::OK();
+    case rocksdb::StatusCode::NOT_FOUND:
+      return rocksdb::Status::NotFound("Not found");
+    case rocksdb::StatusCode::CORRUPTION:
+      return rocksdb::Status::Corruption("Corruption");
+    case rocksdb::StatusCode::NOT_SUPPORTED:
+      return rocksdb::Status::NotSupported("Not supported");
+    case rocksdb::StatusCode::INVALID_ARGUMENT:
+      return rocksdb::Status::InvalidArgument("Invalid argument");
+    case rocksdb::StatusCode::IO_ERROR:
+      return rocksdb::Status::IOError("IO error");
+    case rocksdb::StatusCode::MERGE_IN_PROGRESS:
+      return rocksdb::Status::MergeInProgress("Merge in progress");
+    case rocksdb::StatusCode::INCOMPLETE:
+      return rocksdb::Status::Incomplete("Incomplete");
+    case rocksdb::StatusCode::SHUTDOWN_IN_PROGRESS:
+      return rocksdb::Status::ShutdownInProgress("Shutdown in progress");
+    case rocksdb::StatusCode::TIMED_OUT:
+      return rocksdb::Status::TimedOut("Timed out");
+    case rocksdb::StatusCode::ABORTED:
+      return rocksdb::Status::Aborted("Aborted");
+    case rocksdb::StatusCode::BUSY:
+      return rocksdb::Status::Busy("Busy");
+    case rocksdb::StatusCode::EXPIRED:
+      return rocksdb::Status::Expired("Expired");
+    case rocksdb::StatusCode::TRY_AGAIN:
+      return rocksdb::Status::TryAgain("Try again");
+    default:
+      assert(false);
+  }
 }
 
 void EnsureRocksdb(const std::string& what, const rocksdb::Status& status) {

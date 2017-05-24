@@ -119,7 +119,7 @@ void Info::Remove() {
     succeeded =
         etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
-  UpdateMap();
+  // There's no need to update the map
   UpdateIndex();
 }
 
@@ -178,6 +178,8 @@ void Info::WatchCancel(void* call) {
 std::unordered_map<std::string, std::vector<int>> Info::Tasks() {
   std::lock_guard<std::mutex> lock(mutex_);
   std::unordered_map<std::string, std::vector<int>> tasks;
+  if (id_ < 0 || id_ >= info_.num_nodes())
+    return tasks;
   for (int shard : info_.future(id_))
     tasks[info_.Address(map_[shard])].push_back(shard);
   return tasks;
@@ -192,6 +194,7 @@ void Info::GiveShard(int shard) {
     succeeded =
         etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
+  UpdateMap();
 }
 
 void Info::Print() {
