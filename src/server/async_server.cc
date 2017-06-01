@@ -567,11 +567,13 @@ AsyncServer::AsyncServer(const std::string& etcd_address,
 
 AsyncServer::~AsyncServer() {
   std::cerr << "Shutting down..." << std::endl;
-  server_->Shutdown(std::chrono::system_clock::now());
   cq_->Shutdown();
   void* tag;
   bool ok;
   while (cq_->Next(&tag, &ok))
+    static_cast<Call*>(tag)->Delete();
+  migrate_cq_->Shutdown();
+  while (migrate_cq_->Next(&tag, &ok))
     static_cast<Call*>(tag)->Delete();
   info_.WatchCancel(call_);
   watcher_.join();
@@ -587,6 +589,7 @@ void AsyncServer::Init(const std::string& listening_address,
                            &selected_port);
   builder.RegisterService(&service_);
   cq_ = builder.AddCompletionQueue();
+  migrate_cq_ = builder.AddCompletionQueue();
   server_ = builder.BuildAndStart();
   if (selected_port == 0) {
     std::cerr << "Could not bind to a port" << std::endl;
@@ -610,20 +613,41 @@ void AsyncServer::Run() {
   new DeleteCall(&data);
   new BatchCall(&data);
   new IteratorCall(&data);
-  new MigrateCall(&data);
+  std::thread serve_thread(&AsyncServer::ServeThread, this);
+  CallData migrate_data{&service_, migrate_cq_.get(), db_, &info_, shards_};
+  new MigrateCall(&migrate_data);
   void* tag;
   bool ok;
-  for (;;) {
-    // For the meaning of the return value of Next, and ok see:
-    // https://groups.google.com/d/msg/grpc-io/qtZya6AuGAQ/Umepla-GAAAJ
-    // http://www.grpc.io/grpc/cpp/classgrpc_1_1_completion_queue.html
-    if (!cq_->Next(&tag, &ok)) {
-      std::cerr << "Shutting down..." << std::endl;
+  // For the meaning of the return value of Next, and ok see:
+  // https://groups.google.com/d/msg/grpc-io/qtZya6AuGAQ/Umepla-GAAAJ
+  // http://www.grpc.io/grpc/cpp/classgrpc_1_1_completion_queue.html
+  while (migrate_cq_->Next(&tag, &ok)) {
+    if (shutdown.load()) {
+      std::cerr << "Breaking from migrate_cq_->Next before Proceed"
+                << std::endl;
       break;
     }
     static_cast<Call*>(tag)->Proceed(ok);
     if (shutdown.load())
       break;
+  }
+  server_->Shutdown(std::chrono::system_clock::now());
+  serve_thread.join();
+}
+
+void AsyncServer::ServeThread() {
+  void* tag;
+  bool ok;
+  while (cq_->Next(&tag, &ok)) {
+    if (shutdown.load()) {
+      static_cast<Call*>(tag)->Delete();
+      break;
+    }
+    static_cast<Call*>(tag)->Proceed(ok);
+    if (shutdown.load()) {
+      std::cerr << "Breaking from cq_->Next after Proceed" << std::endl;
+      break;
+    }
   }
 }
 

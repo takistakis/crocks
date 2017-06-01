@@ -48,12 +48,14 @@ class AsyncServer final {
   void Run();
 
  private:
+  void ServeThread();
   void WatchThread();
 
   std::string dbpath_;
   pb::RPC::AsyncService service_;
   std::unique_ptr<grpc::Server> server_;
   std::unique_ptr<grpc::ServerCompletionQueue> cq_;
+  std::unique_ptr<grpc::ServerCompletionQueue> migrate_cq_;
   rocksdb::DB* db_;
   rocksdb::Options options_;
   Info info_;
