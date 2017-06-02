@@ -23,7 +23,7 @@
 
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
-#include <rocksdb/utilities/write_batch_with_index.h>
+#include <rocksdb/write_batch.h>
 
 #include "src/server/util.h"
 
@@ -34,10 +34,14 @@ Shard::Shard(rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf, int shard)
 
 Shard::Shard(rocksdb::DB* db, int shard, const std::string& old_address)
     : db_(db), importing_(true), old_address_(old_address) {
-  rocksdb::Status s = db_->CreateColumnFamily(rocksdb::ColumnFamilyOptions(),
-                                              std::to_string(shard), &cf_);
+  rocksdb::ColumnFamilyOptions options;
+  std::string name = std::to_string(shard);
+  rocksdb::Status s = db_->CreateColumnFamily(options, name, &cf_);
   EnsureRocksdb("CreateColumnFamily", s);
-  newer_ = new rocksdb::WriteBatchWithIndex();
+  name += "-backup";
+  s = db_->CreateColumnFamily(options, name, &backup_);
+  EnsureRocksdb("CreateColumnFamily", s);
+  newer_ = new rocksdb::WriteBatch();
 }
 
 Shard::~Shard() {
@@ -51,7 +55,7 @@ rocksdb::Status Shard::Get(const std::string& key, std::string* value,
   rocksdb::Status s;
   *ask = false;
   if (importing_) {
-    s = newer_->GetFromBatch(cf_, db_->GetOptions(), key, value);
+    s = db_->Get(rocksdb::ReadOptions(), backup_, key, value);
     if (s.IsNotFound())
       *ask = true;
   } else {
@@ -63,20 +67,26 @@ rocksdb::Status Shard::Get(const std::string& key, std::string* value,
 rocksdb::Status Shard::Put(const std::string& key, const std::string& value) {
   std::lock_guard<std::mutex> lock(mutex_);
   rocksdb::Status s;
-  if (importing_)
+  if (importing_) {
+    s = db_->Put(rocksdb::WriteOptions(), backup_, key, value);
+    EnsureRocksdb("Put", s);
     newer_->Put(cf_, key, value);
-  else
+  } else {
     s = db_->Put(rocksdb::WriteOptions(), cf_, key, value);
+  }
   return s;
 }
 
 rocksdb::Status Shard::Delete(const std::string& key) {
   std::lock_guard<std::mutex> lock(mutex_);
   rocksdb::Status s;
-  if (importing_)
+  if (importing_) {
+    s = db_->Delete(rocksdb::WriteOptions(), backup_, key);
+    EnsureRocksdb("Delete", s);
     newer_->Delete(cf_, key);
-  else
+  } else {
     s = db_->Delete(rocksdb::WriteOptions(), cf_, key);
+  }
   return s;
 }
 
@@ -89,9 +99,11 @@ void Shard::Ingest(const std::vector<std::string>& files) {
     s = db_->IngestExternalFile(cf_, files, ifo);
     EnsureRocksdb("IngestExternalFile", s);
   }
-  s = db_->Write(rocksdb::WriteOptions(), newer_->GetWriteBatch());
+  s = db_->Write(rocksdb::WriteOptions(), newer_);
   EnsureRocksdb("Write", s);
   delete newer_;
+  db_->DropColumnFamily(backup_);
+  delete backup_;
   importing_ = false;
 }
 

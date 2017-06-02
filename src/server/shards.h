@@ -29,7 +29,7 @@
 namespace rocksdb {
 class DB;
 class ColumnFamilyHandle;
-class WriteBatchWithIndex;
+class WriteBatch;
 }
 
 namespace crocks {
@@ -60,7 +60,7 @@ class Shard {
     return old_address_;
   }
 
-  // Get the key from the appropriate place (db, batch or both), and put it
+  // Get the key from the appropriate place (db, backup or both), and put it
   // into *value. If it was not found and there is a possibility that the
   // former master of the shard has the most recent value, *ask is true.
   rocksdb::Status Get(const std::string& key, std::string* value, bool* ask);
@@ -85,7 +85,8 @@ class Shard {
   mutable std::mutex mutex_;
   rocksdb::DB* db_;
   rocksdb::ColumnFamilyHandle* cf_;
-  rocksdb::WriteBatchWithIndex* newer_;
+  rocksdb::ColumnFamilyHandle* backup_;
+  rocksdb::WriteBatch* newer_;
   // TODO: Use std::atomic<bool> without the lock
   bool importing_;
   bool removing_{false};
