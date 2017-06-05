@@ -30,10 +30,14 @@
 namespace crocks {
 
 Shard::Shard(rocksdb::DB* db, rocksdb::ColumnFamilyHandle* cf, int shard)
-    : db_(db), cf_(cf), importing_(false) {}
+    : db_(db), cf_(cf), importing_(false), migrating_(false), refs_(1) {}
 
 Shard::Shard(rocksdb::DB* db, int shard, const std::string& old_address)
-    : db_(db), importing_(true), old_address_(old_address) {
+    : db_(db),
+      importing_(true),
+      migrating_(false),
+      refs_(1),
+      old_address_(old_address) {
   rocksdb::ColumnFamilyOptions options;
   std::string name = std::to_string(shard);
   rocksdb::Status s = db_->CreateColumnFamily(options, name, &cf_);
@@ -54,7 +58,7 @@ rocksdb::Status Shard::Get(const std::string& key, std::string* value,
   std::lock_guard<std::mutex> lock(mutex_);
   rocksdb::Status s;
   *ask = false;
-  if (importing_) {
+  if (importing_.load()) {
     s = db_->Get(rocksdb::ReadOptions(), backup_, key, value);
     if (s.IsNotFound())
       *ask = true;
@@ -67,7 +71,7 @@ rocksdb::Status Shard::Get(const std::string& key, std::string* value,
 rocksdb::Status Shard::Put(const std::string& key, const std::string& value) {
   std::lock_guard<std::mutex> lock(mutex_);
   rocksdb::Status s;
-  if (importing_) {
+  if (importing_.load()) {
     s = db_->Put(rocksdb::WriteOptions(), backup_, key, value);
     EnsureRocksdb("Put", s);
     newer_->Put(cf_, key, value);
@@ -80,7 +84,7 @@ rocksdb::Status Shard::Put(const std::string& key, const std::string& value) {
 rocksdb::Status Shard::Delete(const std::string& key) {
   std::lock_guard<std::mutex> lock(mutex_);
   rocksdb::Status s;
-  if (importing_) {
+  if (importing_.load()) {
     s = db_->Delete(rocksdb::WriteOptions(), backup_, key);
     EnsureRocksdb("Delete", s);
     newer_->Delete(cf_, key);
@@ -104,24 +108,29 @@ void Shard::Ingest(const std::vector<std::string>& files) {
   delete newer_;
   db_->DropColumnFamily(backup_);
   delete backup_;
-  importing_ = false;
+  importing_.store(false);
 }
 
 bool Shard::Ref() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  if (removing_)
+  std::lock_guard<std::mutex> lock(ref_mutex_);
+  if (migrating_)
     return false;
+  // Using an atomic integer for the reference counter and remove the
+  // lock would be nice but would cause a race condition. It would be
+  // possible to enter Ref with migrating_ == false, pass the if, run
+  // the whole Unref in another thread and then increment the counter.
+  // That way the reference would reach zero twice and it would crash.
   refs_++;
   return true;
 }
 
-void Shard::Unref() {
-  std::lock_guard<std::mutex> lock(mutex_);
+void Shard::Unref(bool migrating) {
+  std::lock_guard<std::mutex> lock(ref_mutex_);
   refs_--;
-  if (refs_ == 0) {
-    assert(removing_);
+  if (migrating)
+    migrating_ = true;
+  if (refs_ == 0)
     zero_refs_.set_value();
-  }
 }
 
 void Shard::WaitRefs() {

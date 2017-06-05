@@ -18,6 +18,7 @@
 #ifndef CROCKS_SERVER_SHARDS_H
 #define CROCKS_SERVER_SHARDS_H
 
+#include <atomic>
 #include <future>
 #include <mutex>
 #include <string>
@@ -41,22 +42,18 @@ class Shard {
   ~Shard();
 
   rocksdb::ColumnFamilyHandle* cf() const {
-    std::lock_guard<std::mutex> lock(mutex_);
     return cf_;
   }
 
   bool importing() const {
-    std::lock_guard<std::mutex> lock(mutex_);
-    return importing_;
+    return importing_.load();
   }
 
-  void set_removing(bool value) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    removing_ = value;
+  void set_importing(bool value) {
+    importing_.store(value);
   }
 
   std::string old_address() const {
-    std::lock_guard<std::mutex> lock(mutex_);
     return old_address_;
   }
 
@@ -75,8 +72,9 @@ class Shard {
   // Should only be used for requests to modify the shard.
   bool Ref();
 
-  // Decrease the reference counter of the shard
-  void Unref();
+  // Decrease the reference counter of the shard. Once called with migrating
+  // set to true, it's not possible to increase the counter again.
+  void Unref(bool migrating = false);
 
   // Wait for the reference counter to reach 0
   void WaitRefs();
@@ -87,11 +85,12 @@ class Shard {
   rocksdb::ColumnFamilyHandle* cf_;
   rocksdb::ColumnFamilyHandle* backup_;
   rocksdb::WriteBatch* newer_;
-  // TODO: Use std::atomic<bool> without the lock
-  bool importing_;
-  bool removing_{false};
-  int refs_{1};
+  std::atomic<bool> importing_;
+  // If migrating_ is true can't get reference (can't put etc)
+  bool migrating_;
+  int refs_;
   std::promise<void> zero_refs_;
+  std::mutex ref_mutex_;
   std::string old_address_;
 };
 

@@ -500,16 +500,15 @@ class MigrateCall final : public Call {
         std::cerr << data_->info->id() << ": Migrating shard " << shard_id
                   << std::endl;
         shard = data_->shards->at(shard_id);
-        shard->set_removing(true);
-        data_->info->GiveShard(shard_id);
+        shard->Unref(true);
         // From now on requests for the shard are rejected
+        data_->info->GiveShard(shard_id);
         migrator_ = std::unique_ptr<ShardMigrator>(
             new ShardMigrator(data_->db, shard_id));
         // DumpShard creates SST files by iterating on the shard.
         // We can't modify the database after the iterator snapshot
         // is taken, and there may be some unfinished requests.
         // So we wait for the reference counter to reach 0.
-        shard->Unref();
         shard->WaitRefs();
         migrator_->DumpShard(shard->cf());
         retval = migrator_->ReadChunk(&response);
