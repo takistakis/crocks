@@ -64,7 +64,8 @@ class Shard {
   rocksdb::Status Put(const std::string& key, const std::string& value);
   rocksdb::Status Delete(const std::string& key);
 
-  void Ingest(const std::vector<std::string>& files);
+  void Ingest(const std::string& filename, const std::string& largest_key);
+  void FinishImport();
 
   // Increase the reference counter of the shard. Fails and returns
   // false if the shard is marked for removal. A referenced
@@ -92,6 +93,8 @@ class Shard {
   std::promise<void> zero_refs_;
   std::mutex ref_mutex_;
   std::string old_address_;
+  std::string largest_key_;
+  mutable std::mutex largest_key_mutex_;
 };
 
 class Shards {

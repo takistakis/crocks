@@ -45,9 +45,10 @@ class ShardMigrator {
 
  private:
   rocksdb::DB* db_;
+  std::vector<std::string> largest_keys_;
   std::ifstream in_;
-  int total_;
-  int num_;
+  unsigned int total_;
+  unsigned int num_;
   int shard_;
   bool empty_;
 
@@ -59,12 +60,20 @@ class ShardImporter {
  public:
   ShardImporter(rocksdb::DB* db, int shard);
 
-  void WriteChunk(const pb::MigrateResponse& response);
+  bool WriteChunk(const pb::MigrateResponse& response);
 
-  std::vector<std::string> Files();
+  std::string filename() const {
+    return filename_;
+  }
+
+  std::string largest_key() const {
+    return largest_key_;
+  }
 
  private:
   rocksdb::DB* db_;
+  std::string filename_;
+  std::string largest_key_;
   std::ofstream out_;
   int num_;
   int shard_;

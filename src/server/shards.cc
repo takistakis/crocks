@@ -58,7 +58,12 @@ rocksdb::Status Shard::Get(const std::string& key, std::string* value,
   std::lock_guard<std::mutex> lock(mutex_);
   rocksdb::Status s;
   *ask = false;
-  if (importing_.load()) {
+  bool not_ingested_up_to_key;
+  {
+    std::lock_guard<std::mutex> lock(largest_key_mutex_);
+    not_ingested_up_to_key = key > largest_key_;
+  }
+  if (importing_.load() && not_ingested_up_to_key) {
     s = db_->Get(rocksdb::ReadOptions(), backup_, key, value);
     if (s.IsNotFound())
       *ask = true;
@@ -94,16 +99,22 @@ rocksdb::Status Shard::Delete(const std::string& key) {
   return s;
 }
 
-void Shard::Ingest(const std::vector<std::string>& files) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  rocksdb::Status s;
-  if (files.size() > 0) {
-    rocksdb::IngestExternalFileOptions ifo;
-    ifo.move_files = true;
-    s = db_->IngestExternalFile(cf_, files, ifo);
-    EnsureRocksdb("IngestExternalFile", s);
+void Shard::Ingest(const std::string& filename,
+                   const std::string& largest_key) {
+  std::vector<std::string> files{filename};
+  rocksdb::IngestExternalFileOptions ifo;
+  ifo.move_files = true;
+  rocksdb::Status s = db_->IngestExternalFile(cf_, files, ifo);
+  EnsureRocksdb("IngestExternalFile", s);
+  {
+    std::lock_guard<std::mutex> lock(largest_key_mutex_);
+    largest_key_ = largest_key;
   }
-  s = db_->Write(rocksdb::WriteOptions(), newer_);
+}
+
+void Shard::FinishImport() {
+  std::lock_guard<std::mutex> lock(mutex_);
+  rocksdb::Status s = db_->Write(rocksdb::WriteOptions(), newer_);
   EnsureRocksdb("Write", s);
   delete newer_;
   db_->DropColumnFamily(backup_);

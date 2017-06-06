@@ -72,7 +72,7 @@ void ShardMigrator::DumpShard(rocksdb::ColumnFamilyHandle* cf) {
     if (writer.FileSize() > options.target_file_size_base) {
       s = writer.Finish(&file_info);
       EnsureRocksdb("SstFileWriter::Finish", s);
-      // NOTE: file_info.largest_key contains the largest key if the SST file
+      largest_keys_.push_back(file_info.largest_key);
       open = false;
     }
     it->Next();
@@ -80,6 +80,7 @@ void ShardMigrator::DumpShard(rocksdb::ColumnFamilyHandle* cf) {
 
   if (open) {
     s = writer.Finish(&file_info);
+    largest_keys_.push_back(file_info.largest_key);
     EnsureRocksdb("SstFileWriter::Finish", s);
   }
 
@@ -87,6 +88,7 @@ void ShardMigrator::DumpShard(rocksdb::ColumnFamilyHandle* cf) {
   delete it;
 
   total_ = num;
+  assert(largest_keys_.size() == total_);
 }
 
 bool ShardMigrator::ReadChunk(pb::MigrateResponse* response) {
@@ -106,7 +108,7 @@ bool ShardMigrator::ReadChunk(pb::MigrateResponse* response) {
   }
 
   if (!in_.is_open()) {
-    filename_ = Filename(db_->GetName(), shard_, num_++);
+    filename_ = Filename(db_->GetName(), shard_, num_);
     in_.open(filename_, std::ifstream::binary);
     if (!in_) {
       perror(filename_.c_str());
@@ -118,10 +120,12 @@ bool ShardMigrator::ReadChunk(pb::MigrateResponse* response) {
   char buf[kBufSize];
   in_.read(buf, kBufSize);
   response->set_eof(false);
+  response->set_largest_key("");
   response->set_chunk(buf, in_.gcount());
 
   if (in_.eof()) {
     response->set_eof(true);
+    response->set_largest_key(largest_keys_[num_++]);
     in_.close();
     if (remove(filename_.c_str()) < 0)
       perror(filename_.c_str());
@@ -138,19 +142,19 @@ bool ShardMigrator::ReadChunk(pb::MigrateResponse* response) {
 ShardImporter::ShardImporter(rocksdb::DB* db, int shard)
     : db_(db), num_(0), shard_(shard) {}
 
-void ShardImporter::WriteChunk(const pb::MigrateResponse& response) {
+bool ShardImporter::WriteChunk(const pb::MigrateResponse& response) {
   if (response.empty()) {
     // If the shard is empty, WriteChunk is supposed to be called only once
     assert(num_ == 0 && !out_.is_open());
-    return;
+    return false;
   }
 
   if (!out_.is_open()) {
     // Open next file
-    std::string filename = Filename(db_->GetName(), shard_, num_++);
-    out_.open(filename, std::ofstream::binary);
+    filename_ = Filename(db_->GetName(), shard_, num_++);
+    out_.open(filename_, std::ofstream::binary);
     if (!out_) {
-      perror(filename.c_str());
+      perror(filename_.c_str());
       exit(EXIT_FAILURE);
     }
   }
@@ -159,15 +163,12 @@ void ShardImporter::WriteChunk(const pb::MigrateResponse& response) {
   std::string chunk = response.chunk();
   out_.write(chunk.c_str(), chunk.size());
   // Close file if it was the last chunk for the sst
-  if (response.eof())
+  if (response.eof()) {
+    largest_key_ = response.largest_key();
     out_.close();
-}
-
-std::vector<std::string> ShardImporter::Files() {
-  std::vector<std::string> files;
-  for (int i = 0; i < num_; i++)
-    files.push_back(Filename(db_->GetName(), shard_, i));
-  return files;
+    return true;
+  }
+  return false;
 }
 
 }  // namespace crocks

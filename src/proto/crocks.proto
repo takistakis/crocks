@@ -86,4 +86,5 @@ message MigrateResponse {
   bool empty = 1;
   bool eof = 2;
   bytes chunk = 3;
+  bytes largest_key = 4;
 }

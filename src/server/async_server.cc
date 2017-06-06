@@ -682,17 +682,12 @@ void AsyncServer::WatchThread() {
 
         ShardImporter importer(db_, shard_id);
         while (reader->Read(&response))
-          importer.WriteChunk(response);
+          // If true an SST is ready to be imported
+          if (importer.WriteChunk(response))
+            shard->Ingest(importer.filename(), importer.largest_key());
         EnsureRpc(reader->Finish());
-
-        std::vector<std::string> files = importer.Files();
-        shard->Ingest(files);
-        if (files.empty())
-          std::cerr << info_.id() << ": Shard " << shard_id << " was empty"
-                    << std::endl;
-        else
-          std::cerr << info_.id() << ": Imported shard " << shard_id
-                    << std::endl;
+        shard->FinishImport();
+        std::cerr << info_.id() << ": Imported shard " << shard_id << std::endl;
       }
     }
 
