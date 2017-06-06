@@ -23,7 +23,6 @@
 
 #include <rocksdb/db.h>
 #include <rocksdb/options.h>
-#include <rocksdb/write_batch.h>
 
 #include "src/server/util.h"
 
@@ -42,10 +41,6 @@ Shard::Shard(rocksdb::DB* db, int shard, const std::string& old_address)
   std::string name = std::to_string(shard);
   rocksdb::Status s = db_->CreateColumnFamily(options, name, &cf_);
   EnsureRocksdb("CreateColumnFamily", s);
-  name += "-backup";
-  s = db_->CreateColumnFamily(options, name, &backup_);
-  EnsureRocksdb("CreateColumnFamily", s);
-  newer_ = new rocksdb::WriteBatch();
 }
 
 Shard::~Shard() {
@@ -55,48 +50,29 @@ Shard::~Shard() {
 
 rocksdb::Status Shard::Get(const std::string& key, std::string* value,
                            bool* ask) {
-  std::lock_guard<std::mutex> lock(mutex_);
   rocksdb::Status s;
-  *ask = false;
   bool not_ingested_up_to_key;
   {
     std::lock_guard<std::mutex> lock(largest_key_mutex_);
     not_ingested_up_to_key = key > largest_key_;
   }
-  if (importing_.load() && not_ingested_up_to_key) {
-    s = db_->Get(rocksdb::ReadOptions(), backup_, key, value);
-    if (s.IsNotFound())
-      *ask = true;
-  } else {
-    s = db_->Get(rocksdb::ReadOptions(), cf_, key, value);
-  }
+  // The get must take place after not_ingested_up_to_key
+  // is set. Otherwise there is a race: the get can
+  // happen before the ingestion and the check after.
+  s = db_->Get(rocksdb::ReadOptions(), cf_, key, value);
+  // If we are importing and have not yet ingested the SST with the
+  // key range that contains the given key and there is not a more
+  // recent value, we have no choice but to ask the former master.
+  *ask = importing_.load() && not_ingested_up_to_key && s.IsNotFound();
   return s;
 }
 
 rocksdb::Status Shard::Put(const std::string& key, const std::string& value) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  rocksdb::Status s;
-  if (importing_.load()) {
-    s = db_->Put(rocksdb::WriteOptions(), backup_, key, value);
-    EnsureRocksdb("Put", s);
-    newer_->Put(cf_, key, value);
-  } else {
-    s = db_->Put(rocksdb::WriteOptions(), cf_, key, value);
-  }
-  return s;
+  return db_->Put(rocksdb::WriteOptions(), cf_, key, value);
 }
 
 rocksdb::Status Shard::Delete(const std::string& key) {
-  std::lock_guard<std::mutex> lock(mutex_);
-  rocksdb::Status s;
-  if (importing_.load()) {
-    s = db_->Delete(rocksdb::WriteOptions(), backup_, key);
-    EnsureRocksdb("Delete", s);
-    newer_->Delete(cf_, key);
-  } else {
-    s = db_->Delete(rocksdb::WriteOptions(), cf_, key);
-  }
-  return s;
+  return db_->Delete(rocksdb::WriteOptions(), cf_, key);
 }
 
 void Shard::Ingest(const std::string& filename,
@@ -104,22 +80,15 @@ void Shard::Ingest(const std::string& filename,
   std::vector<std::string> files{filename};
   rocksdb::IngestExternalFileOptions ifo;
   ifo.move_files = true;
+  // Ingest file at the bottommost level, so
+  // that it won't overwrite any newer keys
+  ifo.ingest_behind = true;
   rocksdb::Status s = db_->IngestExternalFile(cf_, files, ifo);
   EnsureRocksdb("IngestExternalFile", s);
   {
     std::lock_guard<std::mutex> lock(largest_key_mutex_);
     largest_key_ = largest_key;
   }
-}
-
-void Shard::FinishImport() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  rocksdb::Status s = db_->Write(rocksdb::WriteOptions(), newer_);
-  EnsureRocksdb("Write", s);
-  delete newer_;
-  db_->DropColumnFamily(backup_);
-  delete backup_;
-  importing_.store(false);
 }
 
 bool Shard::Ref() {

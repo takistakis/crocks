@@ -174,6 +174,7 @@ rocksdb::Options DefaultRocksdbOptions() {
   options.OptimizeLevelStyleCompaction();
   options.compaction_pri = rocksdb::kOldestSmallestSeqFirst;
   options.level_compaction_dynamic_level_bytes = true;
+  options.allow_ingest_behind = true;
 
   return options;
 }

@@ -30,7 +30,6 @@
 namespace rocksdb {
 class DB;
 class ColumnFamilyHandle;
-class WriteBatch;
 }
 
 namespace crocks {
@@ -57,15 +56,14 @@ class Shard {
     return old_address_;
   }
 
-  // Get the key from the appropriate place (db, backup or both), and put it
-  // into *value. If it was not found and there is a possibility that the
-  // former master of the shard has the most recent value, *ask is true.
+  // Get the key from the database and put it into *value. If it was
+  // not found and there is a possibility that the former master
+  // of the shard has the most recent value, *ask is set to true.
   rocksdb::Status Get(const std::string& key, std::string* value, bool* ask);
   rocksdb::Status Put(const std::string& key, const std::string& value);
   rocksdb::Status Delete(const std::string& key);
 
   void Ingest(const std::string& filename, const std::string& largest_key);
-  void FinishImport();
 
   // Increase the reference counter of the shard. Fails and returns
   // false if the shard is marked for removal. A referenced
@@ -81,11 +79,8 @@ class Shard {
   void WaitRefs();
 
  private:
-  mutable std::mutex mutex_;
   rocksdb::DB* db_;
   rocksdb::ColumnFamilyHandle* cf_;
-  rocksdb::ColumnFamilyHandle* backup_;
-  rocksdb::WriteBatch* newer_;
   std::atomic<bool> importing_;
   // If migrating_ is true can't get reference (can't put etc)
   bool migrating_;

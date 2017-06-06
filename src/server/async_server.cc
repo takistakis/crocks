@@ -686,7 +686,7 @@ void AsyncServer::WatchThread() {
           if (importer.WriteChunk(response))
             shard->Ingest(importer.filename(), importer.largest_key());
         EnsureRpc(reader->Finish());
-        shard->FinishImport();
+        shard->set_importing(false);
         std::cerr << info_.id() << ": Imported shard " << shard_id << std::endl;
       }
     }

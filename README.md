@@ -4,8 +4,9 @@ A fast, sharded key-value store, based on [RocksDB].
 
 ## Requirements
 
-The server requires RocksDB, and both the server and client require
-[etcd] for cluster membership discovery and coordination.
+The server requires RocksDB version 5.5 or later, and both the server
+and client require [etcd] for cluster membership discovery and
+coordination.
 
 ## Quickstart
 
