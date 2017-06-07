@@ -46,11 +46,6 @@ namespace crocks {
 const grpc::Status invalid_status(grpc::StatusCode::INVALID_ARGUMENT,
                                   "Not responsible for this shard");
 
-// RocksDB status indicating that the shard used to
-// belong to this node but now has been deleted.
-const rocksdb::Status deleted_status(
-    rocksdb::Status::InvalidArgument("Shard already deleted"));
-
 // Simple POD struct used as an argument wrapper for calls
 struct CallData {
   pb::RPC::AsyncService* service;
@@ -80,6 +75,8 @@ class GetCall final : public Call {
     rocksdb::Status s;
     std::string value;
     int shard_id;
+    Shard* shard;
+    bool ask;
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
       std::cerr << "Get request cancelled. Finishing." << std::endl;
@@ -100,12 +97,47 @@ class GetCall final : public Call {
         shard_id = data_->info->ShardForKey(request_.key());
         if (data_->info->WrongShard(shard_id) && !request_.force()) {
           responder_.FinishWithError(invalid_status, this);
-        } else {
-          s = Get(shard_id, request_.key(), &value);
+          status_ = FINISH;
+          break;
+        }
+        shard = data_->shards->at(shard_id);
+        s = shard->Get(request_.key(), &value, &ask);
+        if (ask) {
+          std::cerr << data_->info->id() << ": Asking the former master"
+                    << std::endl;
+          std::unique_ptr<pb::RPC::Stub> stub(
+              pb::RPC::NewStub(grpc::CreateChannel(
+                  shard->old_address(), grpc::InsecureChannelCredentials())));
+          request_.set_force(true);
+          std::unique_ptr<grpc::ClientAsyncResponseReader<pb::Response>> rpc(
+              stub->AsyncGet(&force_get_context_, request_, data_->cq));
+          rpc->Finish(&response_, &force_get_status_, this);
+          status_ = GET;
+          break;
+        }
+        response_.set_status(RocksdbStatusCodeToInt(s.code()));
+        response_.set_value(value);
+        responder_.Finish(response_, grpc::Status::OK, this);
+        status_ = FINISH;
+        break;
+
+      case GET:
+        // If gRPC failed, the server must have shut down and if
+        // RocksDB status is INVALID_ARGUMENT, he has deleted
+        // the shard. Either way, we must have ingested by now.
+        if (!force_get_status_.ok() ||
+            response_.status() == rocksdb::StatusCode::INVALID_ARGUMENT) {
+          std::cerr << data_->info->id() << ": Meanwhile importing finished"
+                    << std::endl;
+          shard_id = data_->info->ShardForKey(request_.key());
+          shard = data_->shards->at(shard_id);
+          s = shard->Get(request_.key(), &value, &ask);
+          assert(!ask);
           response_.set_status(RocksdbStatusCodeToInt(s.code()));
           response_.set_value(value);
-          responder_.Finish(response_, grpc::Status::OK, this);
         }
+        // If he responded successfully we just forward his response
+        responder_.Finish(response_, grpc::Status::OK, this);
         status_ = FINISH;
         break;
 
@@ -113,53 +145,6 @@ class GetCall final : public Call {
         delete this;
         break;
     }
-  }
-
-  rocksdb::Status Get(int shard_id, const std::string& key,
-                      std::string* value) {
-    Shard* shard = data_->shards->at(shard_id);
-    bool ask;
-    rocksdb::Status s = shard->Get(key, value, &ask);
-    if (!ask)
-      return s;
-
-    std::cerr << data_->info->id() << ": Asking the former master" << std::endl;
-
-    // TODO: This should happen in the background
-    s = RequestForceGet(shard->old_address(), key, value);
-
-    // If he replied with invalid argument, we must have ingested by now
-    if (s.IsInvalidArgument()) {
-      assert(!shard->importing());
-      std::cerr << data_->info->id() << ": Meanwhile importing finished"
-                << std::endl;
-      s = shard->Get(key, value, &ask);
-      assert(!ask);
-    }
-    return s;
-  }
-
-  rocksdb::Status RequestForceGet(const std::string& address,
-                                  const std::string& key, std::string* value) {
-    std::unique_ptr<pb::RPC::Stub> stub(pb::RPC::NewStub(
-        grpc::CreateChannel(address, grpc::InsecureChannelCredentials())));
-    grpc::ClientContext context;
-    pb::Key request;
-    pb::Response response;
-    request.set_key(key);
-    request.set_force(true);
-    grpc::Status status = stub->Get(&context, request, &response);
-
-    // If gRPC failed, the server must have shut down and if
-    // RocksDB status is INVALID_ARGUMENT, he has deleted
-    // the shard. Either way, we return INVALID_ARGUMENT.
-    if (!status.ok())
-      return deleted_status;
-    rocksdb::Status s = IntToRocksdbStatus(response.status());
-    if (s.IsInvalidArgument())
-      return deleted_status;
-    *value = response.value();
-    return s;
   }
 
   void Delete() {
@@ -172,7 +157,9 @@ class GetCall final : public Call {
   grpc::ServerAsyncResponseWriter<pb::Response> responder_;
   pb::Key request_;
   pb::Response response_;
-  enum CallStatus { REQUEST, FINISH };
+  grpc::ClientContext force_get_context_;
+  grpc::Status force_get_status_;
+  enum CallStatus { REQUEST, GET, FINISH };
   CallStatus status_;
 };
 
