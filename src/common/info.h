@@ -125,6 +125,8 @@ class Info {
 
   void GiveShard(int shard);
 
+  void RemoveFuture(int shard);
+
   void Print();
 
   void Lock() {

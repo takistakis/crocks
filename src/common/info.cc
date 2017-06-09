@@ -197,6 +197,17 @@ void Info::GiveShard(int shard) {
   UpdateMap();
 }
 
+void Info::RemoveFuture(int shard) {
+  bool succeeded;
+  do {
+    Get();
+    std::string old_info = info_.Serialize();
+    info_.RemoveFuture(id_, shard);
+    succeeded =
+        etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
+  } while (!succeeded);
+}
+
 void Info::Print() {
   if (info_.IsInit())
     std::cout << "state: INIT" << std::endl;

@@ -151,6 +151,8 @@ class InfoWrapper {
 
   void GiveShard(int id, int shard);
 
+  void RemoveFuture(int id, int shard);
+
  private:
   pb::ClusterInfo info_;
   mutable std::mutex mutex_;

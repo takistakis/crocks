@@ -148,15 +148,25 @@ void InfoWrapper::GiveShard(int id, int shard) {
     pb::NodeInfo* node = info_.mutable_nodes(i);
     for (int j = 0; j < node->future_size(); j++) {
       if (node->future(j) == shard) {
-        node->mutable_future()->SwapElements(j, node->future_size() - 1);
-        node->mutable_future()->RemoveLast();
         node->add_shards(shard);
-        std::sort(node->mutable_future()->begin(),
-                  node->mutable_future()->end());
         std::sort(node->mutable_shards()->begin(),
                   node->mutable_shards()->end());
         return;
       }
+    }
+  }
+  assert(false);
+}
+
+void InfoWrapper::RemoveFuture(int id, int shard) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  pb::NodeInfo* node = info_.mutable_nodes(id);
+  for (int i = 0; i < node->future_size(); i++) {
+    if (node->future(i) == shard) {
+      node->mutable_future()->SwapElements(i, node->future_size() - 1);
+      node->mutable_future()->RemoveLast();
+      std::sort(node->mutable_future()->begin(), node->mutable_future()->end());
+      return;
     }
   }
   assert(false);

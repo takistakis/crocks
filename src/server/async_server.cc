@@ -674,6 +674,14 @@ void AsyncServer::WatchThread() {
             shard->Ingest(importer.filename(), importer.largest_key());
         EnsureRpc(reader->Finish());
         shard->set_importing(false);
+        info_.RemoveFuture(shard_id);
+        // Wait for the confirmation from etcd
+        std::vector<int> fut;
+        do {
+          bool ret = info_.WatchNext(call_);
+          assert(!ret);
+          fut = info_.future();
+        } while (std::find(fut.begin(), fut.end(), shard_id) != fut.end());
         std::cerr << info_.id() << ": Imported shard " << shard_id << std::endl;
       }
     }
