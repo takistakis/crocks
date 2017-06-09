@@ -165,7 +165,19 @@ void InfoWrapper::RemoveFuture(int id, int shard) {
     if (node->future(i) == shard) {
       node->mutable_future()->SwapElements(i, node->future_size() - 1);
       node->mutable_future()->RemoveLast();
-      std::sort(node->mutable_future()->begin(), node->mutable_future()->end());
+      // After each removal, sort the list again. If it was the
+      // last shard to import, check if there are more pending
+      // migrations and if not, change the state back to RUNNING.
+      if (node->future_size() != 0) {
+        std::sort(node->mutable_future()->begin(),
+                  node->mutable_future()->end());
+      } else {
+        for (const auto& node : info_.nodes())
+          if (node.future_size() > 0)
+            return;
+        assert(info_.state() == pb::ClusterInfo::MIGRATING);
+        info_.set_state(pb::ClusterInfo::RUNNING);
+      }
       return;
     }
   }

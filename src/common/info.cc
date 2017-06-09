@@ -132,6 +132,8 @@ void Info::Run() {
     if (!etcd_.Get(kInfoKey, &old_info))
       return;
     Parse(old_info);
+    if (IsRunning() || !NoMigrations())
+      return;
     info_.SetRunning();
     succeeded =
         etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);

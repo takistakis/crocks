@@ -639,9 +639,6 @@ void AsyncServer::ServeThread() {
 
 void AsyncServer::WatchThread() {
   while (!info_.WatchNext(call_)) {
-    if (info_.IsMigrating() && info_.NoMigrations())
-      info_.Run();
-
     for (const auto& task : info_.Tasks()) {
       std::string address = task.first;
       for (int shard_id : task.second) {
@@ -685,9 +682,6 @@ void AsyncServer::WatchThread() {
         std::cerr << info_.id() << ": Imported shard " << shard_id << std::endl;
       }
     }
-
-    if (info_.IsMigrating() && info_.NoMigrations())
-      info_.Run();
   }
 }
 
