@@ -20,6 +20,7 @@
 #include <assert.h>
 
 #include <crocks/status.h>
+#include "gen/etcd_lock.pb.h"
 #include "src/common/etcd_util.h"
 
 namespace crocks {
@@ -28,7 +29,8 @@ EtcdClient::EtcdClient(const std::string& address)
     : channel_(
           grpc::CreateChannel(address, grpc::InsecureChannelCredentials())),
       kv_stub_(etcdserverpb::KV::NewStub(channel_)),
-      watch_stub_(etcdserverpb::Watch::NewStub(channel_)) {}
+      watch_stub_(etcdserverpb::Watch::NewStub(channel_)),
+      lock_stub_(v3lockpb::Lock::NewStub(channel_)) {}
 
 int EtcdClient::Get(const std::string& key, std::string* value) {
   etcdserverpb::RangeRequest request;
@@ -130,37 +132,21 @@ void EtcdClient::WatchCancel(void* _call) {
   delete call;
 }
 
-void EtcdClient::WatchEnd(void* _call) {
-  WatchCall* call = static_cast<WatchCall*>(_call);
-  WatchCancelRequest(call->id, &call->request);
-  call->stream->Write(call->request);
-  call->stream->WritesDone();
-  std::string value;
-  while (!WatchNext(_call, &value))
-    ;
-  EnsureRpc(call->stream->Finish());
-  delete call;
-}
-
 void EtcdClient::Lock() {
-  bool succeeded;
-  if (KeyMissing("lock"))
-    succeeded = TxnPutIfKeyMissing("lock", "taken");
-  else
-    succeeded = TxnPutIfValueEquals("lock", "taken", "free");
-  while (!succeeded) {
-    std::string value;
-    void* call = Watch("lock", &value);
-    while (value != "free")
-      WatchNext(call, &value);
-    WatchEnd(call);
-    succeeded = TxnPutIfValueEquals("lock", "taken", "free");
-  }
+  v3lockpb::LockRequest request;
+  v3lockpb::LockResponse response;
+  grpc::ClientContext context;
+  request.set_name("lock");
+  EnsureRpc(lock_stub_->Lock(&context, request, &response));
+  lock_key_ = response.key();
 }
 
 void EtcdClient::Unlock() {
-  bool succeeded = TxnPutIfValueEquals("lock", "free", "taken");
-  assert(succeeded);
+  v3lockpb::UnlockRequest request;
+  v3lockpb::UnlockResponse response;
+  grpc::ClientContext context;
+  request.set_key(lock_key_);
+  EnsureRpc(lock_stub_->Unlock(&context, request, &response));
 }
 
 }  // namespace crocks

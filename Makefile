@@ -18,6 +18,8 @@ PROTO_OBJECTS := $(OBJDIR)/crocks.pb.o \
 	$(OBJDIR)/crocks.grpc.pb.o \
 	$(OBJDIR)/etcd.pb.o \
 	$(OBJDIR)/etcd.grpc.pb.o \
+	$(OBJDIR)/etcd_lock.pb.o \
+	$(OBJDIR)/etcd_lock.grpc.pb.o \
 	$(OBJDIR)/info.pb.o \
 
 COMMON_SOURCES := $(wildcard $(SRCDIR)/common/*.cc)

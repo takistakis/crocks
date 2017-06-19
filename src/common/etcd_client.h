@@ -27,6 +27,7 @@
 
 #include "gen/etcd.grpc.pb.h"
 #include "gen/etcd.pb.h"
+#include "gen/etcd_lock.grpc.pb.h"
 
 namespace crocks {
 
@@ -71,10 +72,6 @@ class EtcdClient {
   // in a different thread, otherwise WatchCancel blocks forever.
   void WatchCancel(void* call);
 
-  // Send a request to cancel the watch call,
-  // wait for the response and finish the RPC.
-  void WatchEnd(void* call);
-
   void Lock();
   void Unlock();
 
@@ -82,6 +79,8 @@ class EtcdClient {
   std::shared_ptr<grpc::Channel> channel_;
   std::unique_ptr<etcdserverpb::KV::Stub> kv_stub_;
   std::unique_ptr<etcdserverpb::Watch::Stub> watch_stub_;
+  std::unique_ptr<v3lockpb::Lock::Stub> lock_stub_;
+  std::string lock_key_;
 };
 
 }  // namespace crocks
