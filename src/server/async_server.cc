@@ -24,6 +24,7 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -100,7 +101,13 @@ class GetCall final : public Call {
           status_ = FINISH;
           break;
         }
-        shard = data_->shards->at(shard_id);
+        try {
+          shard = data_->shards->at(shard_id);
+        } catch (std::out_of_range) {
+          std::cerr << "std::out_of_range in Get (REQUEST state)" << std::endl;
+          std::cerr << "shards->at(" << shard_id << ")" << std::endl;
+          exit(EXIT_FAILURE);
+        }
         s = shard->Get(request_.key(), &value, &ask);
         if (ask) {
           std::cerr << data_->info->id() << ": Asking the former master"
@@ -130,7 +137,13 @@ class GetCall final : public Call {
           std::cerr << data_->info->id() << ": Meanwhile importing finished"
                     << std::endl;
           shard_id = data_->info->ShardForKey(request_.key());
-          shard = data_->shards->at(shard_id);
+          try {
+            shard = data_->shards->at(shard_id);
+          } catch (std::out_of_range) {
+            std::cerr << "std::out_of_range in Get (GET state)" << std::endl;
+            std::cerr << "shards->at(" << shard_id << ")" << std::endl;
+            exit(EXIT_FAILURE);
+          }
           s = shard->Get(request_.key(), &value, &ask);
           assert(!ask);
           response_.set_status(RocksdbStatusCodeToInt(s.code()));
@@ -331,7 +344,14 @@ class BatchCall final : public Call {
               reader_.FinishWithError(invalid_status, this);
               status_ = FINISH;
             }
-            Shard* shard = data_->shards->at(shard_id);
+            Shard* shard;
+            try {
+              shard = data_->shards->at(shard_id);
+            } catch (std::out_of_range) {
+              std::cerr << "std::out_of_range in Batch" << std::endl;
+              std::cerr << "shards->at(" << shard_id << ")" << std::endl;
+              exit(EXIT_FAILURE);
+            }
             rocksdb::ColumnFamilyHandle* cf = shard->cf();
             if (shard->importing())
               std::cerr << "Not implemented" << std::endl;
@@ -486,7 +506,13 @@ class MigrateCall final : public Call {
         shard_id = request_.shard();
         std::cerr << data_->info->id() << ": Migrating shard " << shard_id
                   << std::endl;
-        shard = data_->shards->at(shard_id);
+        try {
+          shard = data_->shards->at(shard_id);
+        } catch (std::out_of_range) {
+          std::cerr << "std::out_of_range in Migrate" << std::endl;
+          std::cerr << "shards->at(" << shard_id << ")" << std::endl;
+          exit(EXIT_FAILURE);
+        }
         shard->Unref(true);
         // From now on requests for the shard are rejected
         data_->info->GiveShard(shard_id);
