@@ -24,7 +24,7 @@ service RPC {
   // of a certain file has the eof flag set to true. As the receiving
   // node gets messages, he appends the raw bytes to a file, and when
   // a message is marked as eof, he closes the file and ingests it.
-  rpc Migrate(MigrateRequest) returns (stream MigrateResponse) {}
+  rpc Migrate(stream MigrateRequest) returns (stream MigrateResponse) {}
 }
 
 message Key {
@@ -85,6 +85,7 @@ message MigrateRequest {
 message MigrateResponse {
   bool empty = 1;
   bool eof = 2;
-  bytes chunk = 3;
-  bytes largest_key = 4;
+  bool finished = 3;
+  bytes chunk = 4;
+  bytes largest_key = 5;
 }

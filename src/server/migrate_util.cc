@@ -103,6 +103,7 @@ bool ShardMigrator::ReadChunk(pb::MigrateResponse* response) {
     // chunk. FWIW protobuf bools are inexpensive on the wire.
     assert(num_ == 0 && !in_.is_open());
     response->set_empty(true);
+    response->set_finished(true);
     done_ = true;
     return true;
   }
@@ -133,8 +134,10 @@ bool ShardMigrator::ReadChunk(pb::MigrateResponse* response) {
 
   // On the last message set done_ = true, so that the
   // next time ReadChunk is called, it will return false;
-  if (num_ == total_ && !in_.is_open())
+  if (num_ == total_ && !in_.is_open()) {
+    response->set_finished(true);
     done_ = true;
+  }
 
   return true;
 }

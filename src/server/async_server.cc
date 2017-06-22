@@ -475,9 +475,8 @@ class IteratorCall final : public Call {
 class MigrateCall final : public Call {
  public:
   explicit MigrateCall(CallData* data)
-      : data_(data), writer_(&ctx_), status_(REQUEST) {
-    data_->service->RequestMigrate(&ctx_, &request_, &writer_, data_->cq,
-                                   data_->cq, this);
+      : data_(data), stream_(&ctx_), status_(REQUEST) {
+    data_->service->RequestMigrate(&ctx_, &stream_, data_->cq, data_->cq, this);
   }
 
   void Proceed(bool ok) {
@@ -489,7 +488,7 @@ class MigrateCall final : public Call {
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
       std::cerr << "Migrate request cancelled. Finishing." << std::endl;
-      writer_.Finish(grpc::Status::CANCELLED, this);
+      stream_.Finish(grpc::Status::CANCELLED, this);
       status_ = FINISH;
       return;
     }
@@ -499,10 +498,15 @@ class MigrateCall final : public Call {
         new MigrateCall(data_);
         if (!ok) {
           std::cerr << "Migrate in REQUEST was not ok. Finishing." << std::endl;
-          writer_.Finish(grpc::Status::CANCELLED, this);
+          stream_.Finish(grpc::Status::CANCELLED, this);
           status_ = FINISH;
           break;
         }
+        stream_.Read(&request_, this);
+        status_ = READ;
+        break;
+
+      case READ:
         shard_id = request_.shard();
         std::cerr << data_->info->id() << ": Migrating shard " << shard_id
                   << std::endl;
@@ -526,25 +530,26 @@ class MigrateCall final : public Call {
         migrator_->DumpShard(shard->cf());
         retval = migrator_->ReadChunk(&response);
         assert(retval);
-        writer_.Write(response, this);
+        stream_.Write(response, this);
         status_ = WRITE;
         break;
 
       case WRITE:
         if (migrator_->ReadChunk(&response)) {
-          writer_.Write(response, this);
+          stream_.Write(response, this);
           status_ = WRITE;
         } else {
-          writer_.Finish(grpc::Status::OK, this);
-          status_ = FINISH;
+          stream_.Read(&request_, this);
+          status_ = DONE;
         }
         break;
 
+      case DONE:
+        stream_.Finish(grpc::Status::OK, this);
+        status_ = FINISH;
+        break;
+
       case FINISH:
-        // Wait for a while to be sure that any pending forced
-        // get requests have been answered. This could also
-        // be achieved with a different reference counter.
-        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
         data_->shards->Remove(request_.shard());
         if (data_->shards->empty()) {
           data_->info->Remove();
@@ -562,10 +567,11 @@ class MigrateCall final : public Call {
  private:
   CallData* data_;
   grpc::ServerContext ctx_;
-  grpc::ServerAsyncWriter<pb::MigrateResponse> writer_;
+  grpc::ServerAsyncReaderWriter<pb::MigrateResponse, pb::MigrateRequest>
+      stream_;
   pb::MigrateRequest request_;
-  pb::Response response_;
-  enum CallStatus { REQUEST, WRITE, FINISH };
+  pb::MigrateResponse response_;
+  enum CallStatus { REQUEST, READ, WRITE, DONE, FINISH };
   CallStatus status_;
   std::unique_ptr<ShardMigrator> migrator_;
 };
@@ -678,8 +684,8 @@ void AsyncServer::WatchThread() {
 
         // Send a request for the shard
         request.set_shard(shard_id);
-        std::unique_ptr<grpc::ClientReaderInterface<pb::MigrateResponse>>
-            reader = stub->Migrate(&context, request);
+        auto stream = stub->Migrate(&context);
+        stream->Write(request);
 
         // Once the old master gets the request, he is supposed to pass
         // ownership to us by informing etcd. We wait for that, so that
@@ -691,12 +697,16 @@ void AsyncServer::WatchThread() {
         // From now on requests for the shard are accepted
 
         ShardImporter importer(db_, shard_id);
-        while (reader->Read(&response))
+        while (stream->Read(&response)) {
           // If true an SST is ready to be imported
           if (importer.WriteChunk(response))
             shard->Ingest(importer.filename(), importer.largest_key());
-        EnsureRpc(reader->Finish());
+          if (response.finished())
+            break;
+        }
         shard->set_importing(false);
+        stream->Write(request);
+        EnsureRpc(stream->Finish());
         info_.RemoveFuture(shard_id);
         // Wait for the confirmation from etcd
         std::vector<int> fut;

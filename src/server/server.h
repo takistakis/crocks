@@ -65,8 +65,9 @@ class Service final : public pb::RPC::Service {
           stream) override;
 
   grpc::Status Migrate(
-      grpc::ServerContext* context, const pb::MigrateRequest* request,
-      grpc::ServerWriter<pb::MigrateResponse>* writer) override;
+      grpc::ServerContext* context,
+      grpc::ServerReaderWriter<pb::MigrateResponse, pb::MigrateRequest>* stream)
+      override;
 
  private:
   Info info_;

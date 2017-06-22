@@ -162,9 +162,9 @@ grpc::Status Service::Iterator(
   return grpc::Status::OK;
 }
 
-grpc::Status Service::Migrate(grpc::ServerContext* context,
-                              const pb::MigrateRequest* request,
-                              grpc::ServerWriter<pb::MigrateResponse>* writer) {
+grpc::Status Service::Migrate(
+    grpc::ServerContext* context,
+    grpc::ServerReaderWriter<pb::MigrateResponse, pb::MigrateRequest>* stream) {
   std::string msg = "The synchronous server does not support migrations";
   std::cerr << msg << std::endl;
   grpc::Status unimplemented(grpc::StatusCode::UNIMPLEMENTED, msg);
