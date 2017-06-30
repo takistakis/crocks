@@ -24,7 +24,6 @@
 #include <string>
 
 #include <rocksdb/advanced_options.h>
-#include <rocksdb/db.h>
 #include <rocksdb/slice.h>
 #include <rocksdb/write_batch.h>
 
@@ -141,21 +140,6 @@ rocksdb::Options DefaultRocksdbOptions() {
   options.allow_ingest_behind = true;
 
   return options;
-}
-
-void AddColumnFamilies(
-    std::vector<int> shards, rocksdb::DB* db,
-    std::unordered_map<int, rocksdb::ColumnFamilyHandle*>* cfs) {
-  std::vector<std::string> names;
-  std::vector<rocksdb::ColumnFamilyHandle*> handles;
-  for (int shard : shards)
-    names.push_back(std::to_string(shard));
-  rocksdb::Status s =
-      db->CreateColumnFamilies(rocksdb::ColumnFamilyOptions(), names, &handles);
-  EnsureRocksdb("CreateColumnFamilies", s);
-  int i = 0;
-  for (int shard : shards)
-    (*cfs)[shard] = handles[i++];
 }
 
 }  // namespace crocks
