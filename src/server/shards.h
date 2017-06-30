@@ -20,6 +20,7 @@
 
 #include <atomic>
 #include <future>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
@@ -95,11 +96,14 @@ class Shard {
 class Shards {
  public:
   Shards(rocksdb::DB* db, std::vector<int> shards);
-  ~Shards();
 
-  Shard* at(int id) {
+  std::shared_ptr<Shard> at(int id) {
     std::lock_guard<std::mutex> lock(mutex_);
-    return shards_.at(id);
+    auto shard = shards_[id];
+    // Accesing a nonexistent shard creates it and we don't want it
+    if (!shard)
+      shards_.erase(id);
+    return shard;
   }
 
   bool empty() const {
@@ -107,21 +111,16 @@ class Shards {
     return shards_.empty();
   }
 
-  Shard* Add(int id, const std::string& old_address);
+  std::shared_ptr<Shard> Add(int id, const std::string& old_address);
 
   void Remove(int id);
 
   std::vector<rocksdb::ColumnFamilyHandle*> ColumnFamilies() const;
 
-  // Increase the reference counter of the given shard. Return
-  // a pointer to the shard on success and nullptr if the shard
-  // does not belong to this node, or is about to be removed.
-  Shard* Ref(int id);
-
  private:
   mutable std::mutex mutex_;
   rocksdb::DB* db_;
-  std::unordered_map<int, Shard*> shards_;
+  std::unordered_map<int, std::shared_ptr<Shard>> shards_;
 };
 
 }  // namespace crocks

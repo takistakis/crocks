@@ -24,7 +24,6 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
-#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -76,7 +75,6 @@ class GetCall final : public Call {
     rocksdb::Status s;
     std::string value;
     int shard_id;
-    Shard* shard;
     bool ask;
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
@@ -101,20 +99,19 @@ class GetCall final : public Call {
           status_ = FINISH;
           break;
         }
-        try {
-          shard = data_->shards->at(shard_id);
-        } catch (std::out_of_range) {
-          std::cerr << "std::out_of_range in Get (REQUEST state)" << std::endl;
-          std::cerr << "shards->at(" << shard_id << ")" << std::endl;
-          exit(EXIT_FAILURE);
+        shard_ = data_->shards->at(shard_id);
+        if (!shard_) {
+          responder_.FinishWithError(invalid_status, this);
+          status_ = FINISH;
+          break;
         }
-        s = shard->Get(request_.key(), &value, &ask);
+        s = shard_->Get(request_.key(), &value, &ask);
         if (ask) {
           std::cerr << data_->info->id() << ": Asking the former master"
                     << std::endl;
           std::unique_ptr<pb::RPC::Stub> stub(
               pb::RPC::NewStub(grpc::CreateChannel(
-                  shard->old_address(), grpc::InsecureChannelCredentials())));
+                  shard_->old_address(), grpc::InsecureChannelCredentials())));
           request_.set_force(true);
           std::unique_ptr<grpc::ClientAsyncResponseReader<pb::Response>> rpc(
               stub->AsyncGet(&force_get_context_, request_, data_->cq));
@@ -136,15 +133,7 @@ class GetCall final : public Call {
             response_.status() == rocksdb::StatusCode::INVALID_ARGUMENT) {
           std::cerr << data_->info->id() << ": Meanwhile importing finished"
                     << std::endl;
-          shard_id = data_->info->ShardForKey(request_.key());
-          try {
-            shard = data_->shards->at(shard_id);
-          } catch (std::out_of_range) {
-            std::cerr << "std::out_of_range in Get (GET state)" << std::endl;
-            std::cerr << "shards->at(" << shard_id << ")" << std::endl;
-            exit(EXIT_FAILURE);
-          }
-          s = shard->Get(request_.key(), &value, &ask);
+          s = shard_->Get(request_.key(), &value, &ask);
           assert(!ask);
           response_.set_status(RocksdbStatusCodeToInt(s.code()));
           response_.set_value(value);
@@ -170,6 +159,10 @@ class GetCall final : public Call {
   grpc::ServerAsyncResponseWriter<pb::Response> responder_;
   pb::Key request_;
   pb::Response response_;
+  // We need to keep the shared_ptr in scope for the whole
+  // lifetime of GetCall to make sure that the shard
+  // doesn't get deleted while a get rpc is in progress.
+  std::shared_ptr<Shard> shard_;
   grpc::ClientContext force_get_context_;
   grpc::Status force_get_status_;
   enum CallStatus { REQUEST, GET, FINISH };
@@ -187,7 +180,10 @@ class PutCall final : public Call {
   void Proceed(bool ok) {
     rocksdb::Status s;
     int shard_id;
-    Shard* shard;
+    // We need to keep the shared_ptr in scope at least
+    // until shard->Ref() is called. If shard->Ref()
+    // succeeds we know that the shard won't be deleted.
+    std::shared_ptr<Shard> shard;
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
       std::cerr << "Put request cancelled. Finishing." << std::endl;
@@ -206,8 +202,8 @@ class PutCall final : public Call {
           break;
         }
         shard_id = data_->info->ShardForKey(request_.key());
-        shard = data_->shards->Ref(shard_id);
-        if (shard == nullptr) {
+        shard = data_->shards->at(shard_id);
+        if (!shard || !shard->Ref()) {
           responder_.FinishWithError(invalid_status, this);
         } else {
           s = shard->Put(request_.key(), request_.value());
@@ -249,7 +245,7 @@ class DeleteCall final : public Call {
   void Proceed(bool ok) {
     rocksdb::Status s;
     int shard_id;
-    Shard* shard;
+    std::shared_ptr<Shard> shard;
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
       std::cerr << "Delete request cancelled. Finishing." << std::endl;
@@ -268,8 +264,8 @@ class DeleteCall final : public Call {
           break;
         }
         shard_id = data_->info->ShardForKey(request_.key());
-        shard = data_->shards->Ref(shard_id);
-        if (shard == nullptr) {
+        shard = data_->shards->at(shard_id);
+        if (!shard || !shard->Ref()) {
           responder_.FinishWithError(invalid_status, this);
         } else {
           s = shard->Delete(request_.key());
@@ -344,13 +340,10 @@ class BatchCall final : public Call {
               reader_.FinishWithError(invalid_status, this);
               status_ = FINISH;
             }
-            Shard* shard;
-            try {
-              shard = data_->shards->at(shard_id);
-            } catch (std::out_of_range) {
-              std::cerr << "std::out_of_range in Batch" << std::endl;
-              std::cerr << "shards->at(" << shard_id << ")" << std::endl;
-              exit(EXIT_FAILURE);
+            std::shared_ptr<Shard> shard = data_->shards->at(shard_id);
+            if (!shard) {
+              reader_.FinishWithError(invalid_status, this);
+              status_ = FINISH;
             }
             rocksdb::ColumnFamilyHandle* cf = shard->cf();
             if (shard->importing())
@@ -484,7 +477,7 @@ class MigrateCall final : public Call {
     pb::MigrateResponse response;
     bool retval;
     int shard_id;
-    Shard* shard;
+    std::shared_ptr<Shard> shard;
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
       std::cerr << "Migrate request cancelled. Finishing." << std::endl;
@@ -510,13 +503,7 @@ class MigrateCall final : public Call {
         shard_id = request_.shard();
         std::cerr << data_->info->id() << ": Migrating shard " << shard_id
                   << std::endl;
-        try {
-          shard = data_->shards->at(shard_id);
-        } catch (std::out_of_range) {
-          std::cerr << "std::out_of_range in Migrate" << std::endl;
-          std::cerr << "shards->at(" << shard_id << ")" << std::endl;
-          exit(EXIT_FAILURE);
-        }
+        shard = data_->shards->at(shard_id);
         shard->Unref(true);
         // From now on requests for the shard are rejected
         data_->info->GiveShard(shard_id);
@@ -674,7 +661,7 @@ void AsyncServer::WatchThread() {
     for (const auto& task : info_.Tasks()) {
       std::string address = task.first;
       for (int shard_id : task.second) {
-        Shard* shard = shards_->Add(shard_id, address);
+        Shard* shard = shards_->Add(shard_id, address).get();
 
         pb::MigrateRequest request;
         pb::MigrateResponse response;
