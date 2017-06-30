@@ -25,7 +25,6 @@
 #include <chrono>
 #include <iostream>
 #include <utility>
-#include <vector>
 
 #include <rocksdb/db.h>
 #include <rocksdb/status.h>
@@ -564,19 +563,24 @@ class MigrateCall final : public Call {
 };
 
 AsyncServer::AsyncServer(const std::string& etcd_address,
-                         const std::string& dbpath)
-    : dbpath_(dbpath), options_(DefaultRocksdbOptions()), info_(etcd_address) {
+                         const std::string& dbpath, int num_threads)
+    : dbpath_(dbpath),
+      options_(DefaultRocksdbOptions()),
+      info_(etcd_address),
+      num_threads_(num_threads) {
   rocksdb::Status s = rocksdb::DB::Open(options_, dbpath_, &db_);
   EnsureRocksdb("Open", s);
 }
 
 AsyncServer::~AsyncServer() {
   std::cerr << "Shutting down..." << std::endl;
-  cq_->Shutdown();
+  for (auto cq = cqs_.begin(); cq != cqs_.end(); ++cq)
+    (*cq)->Shutdown();
   void* tag;
   bool ok;
-  while (cq_->Next(&tag, &ok))
-    static_cast<Call*>(tag)->Delete();
+  for (auto cq = cqs_.begin(); cq != cqs_.end(); ++cq)
+    while ((*cq)->Next(&tag, &ok))
+      static_cast<Call*>(tag)->Delete();
   migrate_cq_->Shutdown();
   while (migrate_cq_->Next(&tag, &ok))
     static_cast<Call*>(tag)->Delete();
@@ -593,7 +597,8 @@ void AsyncServer::Init(const std::string& listening_address,
   builder.AddListeningPort(listening_address, grpc::InsecureServerCredentials(),
                            &selected_port);
   builder.RegisterService(&service_);
-  cq_ = builder.AddCompletionQueue();
+  for (int i = 0; i < num_threads_; i++)
+    cqs_.emplace_back(builder.AddCompletionQueue());
   migrate_cq_ = builder.AddCompletionQueue();
   server_ = builder.BuildAndStart();
   if (selected_port == 0) {
@@ -612,13 +617,16 @@ void AsyncServer::Init(const std::string& listening_address,
 }
 
 void AsyncServer::Run() {
-  CallData data{&service_, cq_.get(), db_, &info_, shards_};
-  new GetCall(&data);
-  new PutCall(&data);
-  new DeleteCall(&data);
-  new BatchCall(&data);
-  new IteratorCall(&data);
-  std::thread serve_thread(&AsyncServer::ServeThread, this);
+  std::vector<std::thread> threads;
+  for (int i = 0; i < num_threads_; i++) {
+    CallData data{&service_, cqs_[i].get(), db_, &info_, shards_};
+    new GetCall(&data);
+    new PutCall(&data);
+    new DeleteCall(&data);
+    new BatchCall(&data);
+    new IteratorCall(&data);
+    threads.emplace_back(std::thread(&AsyncServer::ServeThread, this, i));
+  }
   CallData migrate_data{&service_, migrate_cq_.get(), db_, &info_, shards_};
   new MigrateCall(&migrate_data);
   void* tag;
@@ -637,13 +645,14 @@ void AsyncServer::Run() {
       break;
   }
   server_->Shutdown(std::chrono::system_clock::now());
-  serve_thread.join();
+  for (auto thr = threads.begin(); thr != threads.end(); thr++)
+    thr->join();
 }
 
-void AsyncServer::ServeThread() {
+void AsyncServer::ServeThread(int i) {
   void* tag;
   bool ok;
-  while (cq_->Next(&tag, &ok)) {
+  while (cqs_[i]->Next(&tag, &ok)) {
     if (shutdown.load()) {
       static_cast<Call*>(tag)->Delete();
       break;

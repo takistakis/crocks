@@ -21,6 +21,7 @@
 #include <memory>
 #include <string>
 #include <thread>
+#include <vector>
 
 #include <grpc++/grpc++.h>
 #include <rocksdb/options.h>
@@ -38,7 +39,8 @@ class Shards;
 
 class AsyncServer final {
  public:
-  AsyncServer(const std::string& etcd_address, const std::string& dbpath);
+  AsyncServer(const std::string& etcd_address, const std::string& dbpath,
+              int num_threads);
   ~AsyncServer();
 
   // Start listening for incoming client connections,
@@ -48,13 +50,13 @@ class AsyncServer final {
   void Run();
 
  private:
-  void ServeThread();
+  void ServeThread(int i);
   void WatchThread();
 
   std::string dbpath_;
   pb::RPC::AsyncService service_;
   std::unique_ptr<grpc::Server> server_;
-  std::unique_ptr<grpc::ServerCompletionQueue> cq_;
+  std::vector<std::unique_ptr<grpc::ServerCompletionQueue>> cqs_;
   std::unique_ptr<grpc::ServerCompletionQueue> migrate_cq_;
   rocksdb::DB* db_;
   rocksdb::Options options_;
@@ -62,6 +64,7 @@ class AsyncServer final {
   Shards* shards_;
   void* call_ = nullptr;
   std::thread watcher_;
+  int num_threads_;
 };
 
 }  // namespace crocks

@@ -36,6 +36,7 @@ const std::string usage_message(
     "  -H, --host <hostname>  Node hostname [default: localhost].\n"
     "  -P, --port <port>      Listening port [default: chosen by OS].\n"
     "  -e, --etcd <address>   Etcd address [default: localhost:2379].\n"
+    "  -t, --threads <int>    Number of serving threads [default: 2].\n"
     "  -d, --daemon           Daemonize process.\n"
     "  -v, --version          Show version and exit.\n"
     "  -h, --help             Show this help message and exit.\n");
@@ -45,14 +46,16 @@ int main(int argc, char** argv) {
   std::string hostname = "localhost";
   std::string port = "0";
   std::string etcd_address = "localhost:2379";
+  int num_threads = 2;
 
-  const char* optstring = "p:H:P:e:dvh";
+  const char* optstring = "p:H:P:e:t:dvh";
   static struct option longopts[] = {
       // clang-format off
       {"path",    required_argument, 0, 'p'},
       {"host",    required_argument, 0, 'H'},
       {"port",    required_argument, 0, 'P'},
       {"etcd",    required_argument, 0, 'e'},
+      {"threads", required_argument, 0, 't'},
       {"daemon",  no_argument,       0, 'd'},
       {"version", no_argument,       0, 'v'},
       {"help",    no_argument,       0, 'h'},
@@ -75,6 +78,9 @@ int main(int argc, char** argv) {
         break;
       case 'e':
         etcd_address = optarg;
+        break;
+      case 't':
+        num_threads = std::stoi(optarg);
         break;
       case 'd':
         if (daemon(0, 0) < 0) {
@@ -106,7 +112,7 @@ int main(int argc, char** argv) {
   std::string listening_address = "0.0.0.0:" + port;
 
   // Start server
-  crocks::AsyncServer server(etcd_address, dbpath);
+  crocks::AsyncServer server(etcd_address, dbpath, num_threads);
   server.Init(listening_address, hostname);
   server.Run();
 
