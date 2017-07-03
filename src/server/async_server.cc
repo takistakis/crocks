@@ -24,6 +24,7 @@
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <unordered_map>
 #include <utility>
 
 #include <rocksdb/db.h>
@@ -300,8 +301,8 @@ class DeleteCall final : public Call {
 class BatchCall final : public Call {
  public:
   explicit BatchCall(CallData* data)
-      : data_(data), reader_(&ctx_), status_(REQUEST) {
-    data_->service->RequestBatch(&ctx_, &reader_, data_->cq, data_->cq, this);
+      : data_(data), stream_(&ctx_), status_(REQUEST) {
+    data_->service->RequestBatch(&ctx_, &stream_, data_->cq, data_->cq, this);
   }
 
   void Proceed(bool ok) {
@@ -309,7 +310,7 @@ class BatchCall final : public Call {
 
     if (ctx_.IsCancelled() && status_ != FINISH) {
       std::cerr << "Batch request cancelled. Finishing." << std::endl;
-      reader_.FinishWithError(grpc::Status::CANCELLED, this);
+      stream_.Finish(grpc::Status::CANCELLED, this);
       status_ = FINISH;
       return;
     }
@@ -319,53 +320,66 @@ class BatchCall final : public Call {
         new BatchCall(data_);
         if (!ok) {
           std::cerr << "Batch in REQUEST was not ok. Finishing." << std::endl;
-          reader_.FinishWithError(grpc::Status::CANCELLED, this);
+          stream_.Finish(grpc::Status::CANCELLED, this);
           status_ = FINISH;
           break;
         }
-        reader_.Read(&request_, this);
+        stream_.Read(&request_, this);
         status_ = READ;
         assert(request_.updates_size() == 0);
         break;
 
       case READ:
-        // This read must be done even if ok is false
-        reader_.Read(&request_, this);
         if (ok) {
-          for (const pb::BatchUpdate& batch_update : request_.updates()) {
-            int shard_id = data_->info->ShardForKey(batch_update.key());
-            // TODO: Check if this works
-            if (data_->info->WrongShard(shard_id)) {
-              reader_.FinishWithError(invalid_status, this);
-              status_ = FINISH;
+          int shard_id = data_->info->ShardForKey(request_.updates(0).key());
+          std::shared_ptr<Shard> shard = data_->shards->at(shard_id);
+          if (!got_ref_[shard_id]) {
+            // We got the first buffer
+            if (!shard || !shard->Ref()) {
+              auto code = rocksdb::Status::Code::kInvalidArgument;
+              response_.set_status(RocksdbStatusCodeToInt(code));
+              stream_.Write(response_, this);
+              status_ = WRITE;
+              // break early to avoid applying the buffer
+              break;
+            } else {
+              got_ref_[shard_id] = true;
+              auto code = rocksdb::Status::Code::kOk;
+              response_.set_status(RocksdbStatusCodeToInt(code));
+              stream_.Write(response_, this);
+              status_ = WRITE;
             }
-            std::shared_ptr<Shard> shard = data_->shards->at(shard_id);
-            if (!shard) {
-              reader_.FinishWithError(invalid_status, this);
-              status_ = FINISH;
-            }
-            rocksdb::ColumnFamilyHandle* cf = shard->cf();
-            if (shard->importing())
-              std::cerr << "Not implemented" << std::endl;
-            // ApplyBatchUpdate(data_->newer->at(shard_id)->GetWriteBatch(), cf,
-            //                  batch_update);
-            else
-              ApplyBatchUpdate(&batch_, cf, batch_update);
+          } else {
+            stream_.Read(&request_, this);
+            assert(status_ == READ);
           }
+          for (const pb::BatchUpdate& batch_update : request_.updates())
+            ApplyBatchUpdate(&batch_, shard->cf(), batch_update);
         } else {
-          status_ = DONE;
+          s = data_->db->Write(rocksdb::WriteOptions(), &batch_);
+          response_.set_status(RocksdbStatusCodeToInt(s.code()));
+          stream_.Write(response_, this);
+          status_ = WRITE;
+          finish_ = true;
         }
         break;
 
-      case DONE:
-        assert(!ok);
-        s = data_->db->Write(rocksdb::WriteOptions(), &batch_);
-        response_.set_status(RocksdbStatusCodeToInt(s.code()));
-        reader_.Finish(response_, grpc::Status::OK, this);
-        status_ = FINISH;
+      case WRITE:
+        assert(ok);
+        if (!finish_) {
+          stream_.Read(&request_, this);
+          status_ = READ;
+        } else {
+          stream_.Finish(grpc::Status::OK, this);
+          status_ = FINISH;
+        }
         break;
 
       case FINISH:
+        // Unreference every referenced shard
+        for (auto pair : got_ref_)
+          if (pair.second)
+            data_->shards->at(pair.first)->Unref();
         delete this;
         break;
     }
@@ -378,10 +392,12 @@ class BatchCall final : public Call {
  private:
   CallData* data_;
   grpc::ServerContext ctx_;
-  grpc::ServerAsyncReader<pb::Response, pb::BatchBuffer> reader_;
+  grpc::ServerAsyncReaderWriter<pb::Response, pb::BatchBuffer> stream_;
   pb::BatchBuffer request_;
   pb::Response response_;
-  enum CallStatus { REQUEST, READ, DONE, FINISH };
+  std::unordered_map<int, bool> got_ref_;
+  bool finish_ = false;
+  enum CallStatus { REQUEST, READ, WRITE, FINISH };
   CallStatus status_;
   rocksdb::WriteBatch batch_;
 };
@@ -508,10 +524,16 @@ class MigrateCall final : public Call {
         data_->info->GiveShard(shard_id);
         migrator_ = std::unique_ptr<ShardMigrator>(
             new ShardMigrator(data_->db, shard_id));
-        // DumpShard creates SST files by iterating on the shard.
-        // We can't modify the database after the iterator snapshot
-        // is taken, and there may be some unfinished requests.
-        // So we wait for the reference counter to reach 0.
+        // DumpShard() creates SST files by iterating on the shard. We can't
+        // modify the database after the iterator snapshot is taken, and
+        // there may be some unfinished requests. So we have to wait for
+        // the reference counter to reach 0 before calling DumpShard().
+        // If we took into account batches, we would have do to that even
+        // before calling GiveShard(). This is necessary, because the batch is
+        // committed on the server that referenced the shard and any writes
+        // that happen from the moment the shard is given until the commit,
+        // will appear to have happened after the commit. However waiting for
+        // the references before giving the shard might cause a deadlock.
         shard->WaitRefs();
         migrator_->DumpShard(shard->cf());
         retval = migrator_->ReadChunk(&response);

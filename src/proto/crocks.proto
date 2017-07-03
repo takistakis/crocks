@@ -14,7 +14,7 @@ service RPC {
   rpc Merge(KeyValue) returns (Response) {}
 
   // Wrapper around rocksdb::WriteBatch
-  rpc Batch(stream BatchBuffer) returns (Response) {}
+  rpc Batch(stream BatchBuffer) returns (stream Response) {}
 
   // Wrapper around rocksdb::Iterator
   rpc Iterator(stream IteratorRequest) returns (stream IteratorResponse) {}

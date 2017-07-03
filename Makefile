@@ -52,7 +52,7 @@ crocksctl: $(PROTO_OBJECTS) $(CLIENT_OBJECTS) $(OBJDIR)/crocksctl/crocksctl.o
 
 .PHONY: test
 test: test_node test_cluster test_batch test_iterator test_wrong_shard \
-	test_lock test_lock2 test_migrations
+	test_lock test_lock2 test_migrations test_migrations2
 test_%: $(CLIENT_OBJECTS) $(OBJDIR)/test/test_%.o
 	@echo "Linking     $@"
 	@$(CXX) $^ $(LDFLAGS) -o $@

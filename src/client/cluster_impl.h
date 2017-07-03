@@ -40,13 +40,19 @@ class Cluster::ClusterImpl {
   Status SingleDelete(const std::string& key);
   Status Merge(const std::string& key, const std::string& value);
 
+  int IndexForShard(int shard);
   int ShardForKey(const std::string& key);
   int IndexForKey(const std::string& key);
   Node* NodeForKey(const std::string& key);
   Node* NodeByIndex(int idx);
+  std::string AddressForShard(int shard, bool update = false);
 
   int num_nodes() const {
     return info_.num_nodes();
+  }
+
+  int num_shards() const {
+    return info_.num_shards();
   }
 
   void Lock() {

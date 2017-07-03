@@ -48,6 +48,10 @@ Status Cluster::Merge(const std::string& key, const std::string& value) {
   return impl_->Merge(key, value);
 }
 
+int Cluster::IndexForShard(int shard) {
+  return impl_->IndexForShard(shard);
+}
+
 int Cluster::ShardForKey(const std::string& key) {
   return impl_->ShardForKey(key);
 }
@@ -64,8 +68,16 @@ Node* Cluster::NodeByIndex(int idx) {
   return impl_->NodeByIndex(idx);
 }
 
+std::string Cluster::AddressForShard(int shard, bool update) {
+  return impl_->AddressForShard(shard, update);
+}
+
 int Cluster::num_nodes() const {
   return impl_->num_nodes();
+}
+
+int Cluster::num_shards() const {
+  return impl_->num_shards();
 }
 
 void Cluster::Lock() {
@@ -140,6 +152,10 @@ Status Cluster::ClusterImpl::Merge(const std::string& key,
   return status;
 }
 
+int Cluster::ClusterImpl::IndexForShard(int shard) {
+  return info_.IndexForShard(shard);
+}
+
 int Cluster::ClusterImpl::ShardForKey(const std::string& key) {
   return info_.ShardForKey(key);
 }
@@ -155,6 +171,13 @@ Node* Cluster::ClusterImpl::NodeForKey(const std::string& key) {
 
 Node* Cluster::ClusterImpl::NodeByIndex(int idx) {
   return nodes_[idx];
+}
+
+std::string Cluster::ClusterImpl::AddressForShard(int shard, bool update) {
+  if (update)
+    Update();
+  int idx = info_.IndexForShard(shard);
+  return nodes_[idx]->address();
 }
 
 void Cluster::ClusterImpl::Update() {

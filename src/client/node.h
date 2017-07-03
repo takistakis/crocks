@@ -49,9 +49,9 @@ class Node {
   Status Merge(const std::string& key, const std::string& value);
 
   // For write_batch
-  std::unique_ptr<grpc::ClientAsyncWriter<pb::BatchBuffer>> AsyncBatchWriter(
-      grpc::ClientContext* context, pb::Response* response,
-      grpc::CompletionQueue* cq, void* tag);
+  std::unique_ptr<grpc::ClientAsyncReaderWriter<pb::BatchBuffer, pb::Response>>
+  AsyncBatchStream(grpc::ClientContext* context, grpc::CompletionQueue* cq,
+                   void* tag);
 
   // For iterator
   std::unique_ptr<

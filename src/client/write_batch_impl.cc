@@ -21,6 +21,8 @@
 #include <stdlib.h>
 
 #include <chrono>
+#include <iostream>
+#include <utility>
 
 #include <crocks/cluster.h>
 #include <crocks/status.h>
@@ -64,71 +66,124 @@ Status WriteBatch::WriteWithLock() {
   return impl_->WriteWithLock();
 }
 
+void Buffer::AddPut(const std::string& key, const std::string& value) {
+  pb::BatchUpdate* batch_update = buffer_.add_updates();
+  batch_update->set_op(pb::BatchUpdate::PUT);
+  batch_update->set_key(key);
+  batch_update->set_value(value);
+  // XXX: ByteSize() seems to be deprecated in favor of ByteSizeLong()
+  // which returns size_t instead of int.
+  // XXX: We keep track of the total bytes, because buffer_.ByteSize()
+  // recalculates the size and it's too expensive to do that every
+  // time StreamIfExceededThreshold() is called (i.e. at every single
+  // batch operation). In crocks.pb.cc apart from the size of each
+  // individual BatchUpdate there is this line: total_size += 1 *
+  // this->updates_size(); so we need to add at least 1 for each
+  // batch_update. However the true size seems to be bigger by 1 or
+  // 2 bytes. We add 3 to be sure and in StreamIfExceededThreshold()
+  // we assert that our estimation is no bigger than the actual size.
+  byte_size_ += batch_update->ByteSize() + 3;
+}
+
+void Buffer::AddDelete(const std::string& key) {
+  pb::BatchUpdate* batch_update = buffer_.add_updates();
+  batch_update->set_op(pb::BatchUpdate::DELETE);
+  batch_update->set_key(key);
+  byte_size_ += batch_update->ByteSize() + 3;
+}
+
+void Buffer::AddSingleDelete(const std::string& key) {
+  pb::BatchUpdate* batch_update = buffer_.add_updates();
+  batch_update->set_op(pb::BatchUpdate::SINGLE_DELETE);
+  batch_update->set_key(key);
+  byte_size_ += batch_update->ByteSize() + 3;
+}
+
+void Buffer::AddMerge(const std::string& key, const std::string& value) {
+  pb::BatchUpdate* batch_update = buffer_.add_updates();
+  batch_update->set_op(pb::BatchUpdate::MERGE);
+  batch_update->set_key(key);
+  batch_update->set_value(value);
+  byte_size_ += batch_update->ByteSize() + 3;
+}
+
+void Buffer::AddClear() {
+  pb::BatchUpdate* batch_update = buffer_.add_updates();
+  batch_update->set_op(pb::BatchUpdate::CLEAR);
+  byte_size_ += batch_update->ByteSize() + 3;
+}
+
+void Buffer::Clear() {
+  buffer_.Clear();
+  byte_size_ = 0;
+}
+
+void Buffer::Stream() {
+  call_->stream->Write(buffer_, this);
+  call_->pending_requests++;
+}
+
+void Buffer::RestreamFirstBuffer() {
+  assert(first_);
+  assert(read_requested_);
+  assert(first_buffer_.updates_size() > 0);
+  call_->stream->Write(first_buffer_, this);
+  call_->pending_requests++;
+}
+
+void Buffer::RequestRead() {
+  assert(first_);
+  call_->stream->Read(&response_, this);
+  // The first time this is called we have to copy the buffer
+  if (!read_requested_) {
+    read_requested_ = true;
+    first_buffer_ = buffer_;
+  }
+  call_->pending_requests++;
+}
+
 // Write batch implementation
 WriteBatch::WriteBatchImpl::WriteBatchImpl(Cluster* db)
     : db_(db),
-      // Fill call_ vector with db_->num_nodes() nullptrs
-      calls_(db_->num_nodes()) {}
+      // Fill buffer_ vector with db_->num_shards() nullptrs
+      buffers_(db_->num_shards()) {}
 
 WriteBatch::WriteBatchImpl::~WriteBatchImpl() {
   // Some items may be empty but deleting nullptr is ok
-  for (auto call : calls_)
-    delete call;
+  for (auto pair : calls_)
+    delete pair.second;
+  for (auto buffer : buffers_)
+    delete buffer;
 };
 
 void WriteBatch::WriteBatchImpl::Put(const std::string& key,
                                      const std::string& value) {
-  int idx = db_->IndexForKey(key);
-  AsyncBatchCall* call = EnsureBatchCall(idx);
-  pb::BatchUpdate* batch_update = call->request.add_updates();
-  batch_update->set_op(pb::BatchUpdate::PUT);
-  batch_update->set_key(key);
-  batch_update->set_value(value);
-  // XXX: ByteSize() seems to be deprecated in favor of ByteSizeLong() which
-  // returns size_t instead of int.
-  // XXX: We keep track of the total bytes, because call->request.ByteSize()
-  // recalculates the size and it's too expensive to do that every time
-  // StreamIfExceededThreshold() is called (i.e. at every single batch
-  // operation). In crocks.pb.cc apart from the size of each individual
-  // BatchUpdate there is this line: total_size += 1 * this->updates_size(); so
-  // we need to add at least 1 for each batch_update. However the true size
-  // seems to be bigger by 1 or 2 bytes. We add 3 to be sure and in
-  // StreamIfExceededThreshold() we assert that our estimation is no bigger than
-  // the actual size.
-  call->byte_size += batch_update->ByteSize() + 3;
-  StreamIfExceededThreshold(idx);
+  int shard = db_->ShardForKey(key);
+  Buffer* buffer = EnsureBuffer(shard);
+  buffer->AddPut(key, value);
+  StreamIfExceededThreshold(shard);
 }
 
 void WriteBatch::WriteBatchImpl::Delete(const std::string& key) {
-  int idx = db_->IndexForKey(key);
-  AsyncBatchCall* call = EnsureBatchCall(idx);
-  pb::BatchUpdate* batch_update = call->request.add_updates();
-  batch_update->set_op(pb::BatchUpdate::DELETE);
-  batch_update->set_key(key);
-  call->byte_size += batch_update->ByteSize() + 3;
-  StreamIfExceededThreshold(idx);
+  int shard = db_->ShardForKey(key);
+  Buffer* buffer = EnsureBuffer(shard);
+  buffer->AddDelete(key);
+  StreamIfExceededThreshold(shard);
 }
 
 void WriteBatch::WriteBatchImpl::SingleDelete(const std::string& key) {
-  int idx = db_->IndexForKey(key);
-  AsyncBatchCall* call = EnsureBatchCall(idx);
-  pb::BatchUpdate* batch_update = call->request.add_updates();
-  batch_update->set_op(pb::BatchUpdate::SINGLE_DELETE);
-  batch_update->set_key(key);
-  call->byte_size += batch_update->ByteSize() + 3;
-  StreamIfExceededThreshold(idx);
+  int shard = db_->ShardForKey(key);
+  Buffer* buffer = EnsureBuffer(shard);
+  buffer->AddSingleDelete(key);
+  StreamIfExceededThreshold(shard);
 }
 
 void WriteBatch::WriteBatchImpl::Merge(const std::string& key,
                                        const std::string& value) {
-  int idx = db_->IndexForKey(key);
-  AsyncBatchCall* call = EnsureBatchCall(idx);
-  pb::BatchUpdate* batch_update = call->request.add_updates();
-  batch_update->set_op(pb::BatchUpdate::MERGE);
-  batch_update->set_key(key);
-  batch_update->set_value(value);
-  call->byte_size += batch_update->ByteSize() + 3;
-  StreamIfExceededThreshold(idx);
+  int shard = db_->ShardForKey(key);
+  Buffer* buffer = EnsureBuffer(shard);
+  buffer->AddMerge(key, value);
+  StreamIfExceededThreshold(shard);
 }
 
 void WriteBatch::WriteBatchImpl::Clear() {
@@ -136,13 +191,9 @@ void WriteBatch::WriteBatchImpl::Clear() {
   // so that the servers clear their own batches. Since the operations are
   // cleared, there is no way the threshold is exceeded and we don't need to
   // call StreamIfExceededThreshold().
-  for (auto call : calls_) {
-    if (call == nullptr)
-      continue;
-    call->request.Clear();
-    pb::BatchUpdate* batch_update = call->request.add_updates();
-    batch_update->set_op(pb::BatchUpdate::CLEAR);
-    call->byte_size += batch_update->ByteSize() + 3;
+  for (auto buffer : buffers_) {
+    buffer->Clear();
+    buffer->AddClear();
   }
 }
 
@@ -159,24 +210,38 @@ Status WriteBatch::WriteBatchImpl::WriteWithLock() {
 }
 
 // private
-AsyncBatchCall* WriteBatch::WriteBatchImpl::EnsureBatchCall(int idx) {
-  AsyncBatchCall* call = calls_[idx];
+AsyncBatchCall* WriteBatch::WriteBatchImpl::EnsureBatchCall(
+    const std::string& address) {
+  AsyncBatchCall* call = calls_[address];
   if (call == nullptr) {
     call = new AsyncBatchCall;
-    calls_[idx] = call;
+    calls_[address] = call;
   }
   return call;
 }
 
+Buffer* WriteBatch::WriteBatchImpl::EnsureBuffer(int shard) {
+  Buffer* buffer = buffers_[shard];
+  if (buffer == nullptr) {
+    buffer = new Buffer;
+    buffer->set_shard(shard);
+    buffers_[shard] = buffer;
+  }
+  return buffer;
+}
+
 // Get a tag from the completion queue and decrement the number of
 // pending_requests of the related call.
-void WriteBatch::WriteBatchImpl::QueueNext() {
+void WriteBatch::WriteBatchImpl::QueueNext(bool call) {
   void* got_tag;
   bool ok = false;
   bool got_event = cq_.Next(&got_tag, &ok);
   assert(got_event);
   assert(ok);
-  static_cast<AsyncBatchCall*>(got_tag)->pending_requests--;
+  if (call)
+    static_cast<AsyncBatchCall*>(got_tag)->pending_requests--;
+  else
+    static_cast<Buffer*>(got_tag)->call()->pending_requests--;
 }
 
 // Similar to QueueNext() but does not block and returns true if it processed a
@@ -190,7 +255,7 @@ bool WriteBatch::WriteBatchImpl::QueueAsyncNext() {
   switch (cq_.AsyncNext(&got_tag, &ok, std::chrono::system_clock::now())) {
     case grpc::CompletionQueue::GOT_EVENT:
       assert(ok);
-      static_cast<AsyncBatchCall*>(got_tag)->pending_requests--;
+      static_cast<Buffer*>(got_tag)->call()->pending_requests--;
       return true;
     case grpc::CompletionQueue::TIMEOUT:
       return false;
@@ -202,38 +267,48 @@ bool WriteBatch::WriteBatchImpl::QueueAsyncNext() {
   return false;
 }
 
-void WriteBatch::WriteBatchImpl::StreamIfExceededThreshold(int idx) {
-  AsyncBatchCall* call = calls_[idx];
-  if (call->byte_size <= kByteSizeThreshold1) {
+void WriteBatch::WriteBatchImpl::StreamIfExceededThreshold(int shard) {
+  Buffer* buffer = buffers_[shard];
+  AsyncBatchCall* call = buffer->call();
+  if (call == nullptr) {
+    std::string address = db_->AddressForShard(shard);
+    call = EnsureBatchCall(address);
+    buffer->set_call(call);
+  }
+  if (buffer->ByteSize() <= kByteSizeThreshold1) {
     // Below the low threshold. Do nothing.
     return;
-  } else if (call->byte_size <= kByteSizeThreshold2) {
+  } else if (buffer->ByteSize() <= kByteSizeThreshold2) {
     // Above the low threshold. If there are pending requests even after
     // checking the queue, continue and try again later, else send a buffer.
     while (call->pending_requests > 0 && QueueAsyncNext())
       ;
     if (call->pending_requests == 0)
-      Stream(idx);
+      Stream(buffer);
   } else {
     // Above the high threshold. We have no choice but to block.
     while (call->pending_requests > 0)
       QueueNext();
-    Stream(idx);
+    Stream(buffer);
   }
 }
 
-void WriteBatch::WriteBatchImpl::Stream(int idx) {
-  AsyncBatchCall* call = calls_[idx];
-  if (call->request.updates_size() == 0)
-    return;
-
-  assert(call->request.ByteSize() <= call->byte_size);
-  if (call->writer == nullptr) {
+void WriteBatch::WriteBatchImpl::Stream(Buffer* buffer) {
+  assert(buffer->updates_size() > 0);
+  assert(buffer->RealByteSize() <= buffer->ByteSize());
+  AsyncBatchCall* call = buffer->call();
+  // assert(call->pending_requests == 0);
+  if (call->stream == nullptr) {
+    // FIXME: OK, it could be better like NodeForShard or something
+    Node* node = db_->NodeForKey(buffer->get().updates(0).key());
+    call->stream = node->AsyncBatchStream(&call->context, &cq_, buffer);
     assert(call->pending_requests == 0);
-    call->writer = db_->NodeByIndex(idx)->AsyncBatchWriter(
-        &call->context, &call->response, &cq_, call);
-    call->writer->Write(call->request, call);
-    call->pending_requests = 2;
+    call->pending_requests = 1;
+    buffer->Stream();
+    assert(buffer->first());
+    assert(!buffer->read_requested());
+    buffer->RequestRead();
+    buffer->Clear();
   } else {
     // From http://www.grpc.io/grpc/cpp/classgrpc_1_1_client_async_writer.html:
     // "Only one write may be outstanding at any given time. This means that
@@ -243,45 +318,97 @@ void WriteBatch::WriteBatchImpl::Stream(int idx) {
     // pending requests for the given call.
     while (call->pending_requests > 0)
       QueueNext();
-    call->writer->Write(call->request, call);
-    call->request.Clear();
-    call->byte_size = 0;
-    call->pending_requests = 1;
+    if (buffer->first()) {
+      if (buffer->read_requested()) {
+        if (buffer->ok()) {
+          // OK, set not first and stream normally
+          buffer->set_first(false);
+          buffer->Stream();
+          buffer->Clear();
+        } else {
+          // Not OK, update and stream the first buffer again
+          std::string address = db_->AddressForShard(buffer->shard(), true);
+          AsyncBatchCall* call = EnsureBatchCall(address);
+          buffer->set_call(call);
+          if (call->stream == nullptr) {
+            Node* node = db_->NodeForKey(buffer->get().updates(0).key());
+            call->stream = node->AsyncBatchStream(&call->context, &cq_, buffer);
+            assert(call->pending_requests == 0);
+            call->pending_requests = 1;
+          }
+          while (call->pending_requests > 0)
+            QueueNext();
+          buffer->RestreamFirstBuffer();
+          buffer->RequestRead();
+        }
+      } else {
+        // Stream the first buffer and request a response
+        buffer->Stream();
+        buffer->RequestRead();
+        buffer->Clear();
+      }
+    } else {
+      // Stream normally
+      buffer->Stream();
+      buffer->Clear();
+    }
   }
 }
 
 void WriteBatch::WriteBatchImpl::DoWrite() {
   // Fan-out the remaining buffers and the finish-RPC requests
-  for (int idx = 0; idx < db_->num_nodes(); idx++) {
-    AsyncBatchCall* call = calls_[idx];
-    if (call == nullptr)
+  for (Buffer* buffer : buffers_) {
+    if (buffer == nullptr)
       continue;
-    Stream(idx);
-    call->writer->WritesDone(call);
-    call->writer->Finish(&call->status, call);
-    call->pending_requests += 2;
+    assert(buffer->call() != nullptr);
+    if (buffer->updates_size() > 0)
+      Stream(buffer);
   }
 
   // Make sure every server has responded
-  for (auto call : calls_) {
-    if (call == nullptr)
-      continue;
+  for (auto pair : calls_) {
+    AsyncBatchCall* call = pair.second;
+    assert(call != nullptr);
     while (call->pending_requests > 0)
       QueueNext();
+  }
+
+  for (auto pair : calls_) {
+    AsyncBatchCall* call = pair.second;
+    assert(call != nullptr);
+    // Once per call so we associate it with the call instead of the buffer
+    call->stream->WritesDone(call);
+    call->stream->Read(&call->response, call);
+    call->stream->Finish(&call->status, call);
+    call->pending_requests += 3;
+  }
+
+  // Make sure every server has responded
+  for (auto pair : calls_) {
+    AsyncBatchCall* call = pair.second;
+    assert(call != nullptr);
+    while (call->pending_requests > 0)
+      // This QueueNext gets tags associated with a call
+      QueueNext(true);
   }
 }
 
 Status WriteBatch::WriteBatchImpl::GetStatus() {
   // Check the statuses and return the first that's not OK
-  for (int idx = 0; idx < db_->num_nodes(); idx++) {
-    AsyncBatchCall* call = calls_[idx];
-    if (call == nullptr)
-      continue;
-    call->writer = nullptr;
+  for (auto pair : calls_) {
+    AsyncBatchCall* call = pair.second;
+    assert(call != nullptr);
+    call->stream = nullptr;
     if (call->status.ok()) {
       if (call->response.status() != rocksdb::StatusCode::OK)
         return Status(call->response.status());
     } else {
+      // FIXME: Possible when a call was started, no
+      // shards were referenced, and the node shut down.
+      if (call->status.error_code() == grpc::StatusCode::UNAVAILABLE) {
+        std::cerr << "Ignoring UNAVAILABLE gRPC status" << std::endl;
+        continue;
+      }
       return Status(call->status);
     }
   }

@@ -81,10 +81,10 @@ Status Node::Merge(const std::string& key, const std::string& value) {
 }
 
 // For write_batch
-std::unique_ptr<grpc::ClientAsyncWriter<pb::BatchBuffer>>
-Node::AsyncBatchWriter(grpc::ClientContext* context, pb::Response* response,
-                       grpc::CompletionQueue* cq, void* tag) {
-  return stub_->AsyncBatch(context, response, cq, tag);
+std::unique_ptr<grpc::ClientAsyncReaderWriter<pb::BatchBuffer, pb::Response>>
+Node::AsyncBatchStream(grpc::ClientContext* context, grpc::CompletionQueue* cq,
+                       void* tag) {
+  return stub_->AsyncBatch(context, cq, tag);
 }
 
 // For iterator
