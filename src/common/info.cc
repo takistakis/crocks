@@ -78,9 +78,9 @@ void Info::Add(const std::string& address) {
     if (etcd_.Get(kInfoKey, &old_info)) {
       Parse(old_info);
       if (info_.IsInit()) {
-        info_.AddNodeWithNewShards(address);
+        id_ = info_.AddNodeWithNewShards(address);
       } else if (info_.IsRunning()) {
-        info_.AddNode(address);
+        id_ = info_.AddNode(address);
       } else if (info_.IsMigrating()) {
         std::cout << "Migrating. Try again later." << std::endl;
         exit(EXIT_FAILURE);
@@ -88,23 +88,21 @@ void Info::Add(const std::string& address) {
       succeeded =
           etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
     } else {
-      info_.AddNodeWithNewShards(address);
+      id_ = info_.AddNodeWithNewShards(address);
       succeeded = etcd_.TxnPutIfKeyMissing(kInfoKey, info_.Serialize());
     }
   } while (!succeeded);
-  UpdateMap();
-  // Set the index and address of the new node
-  id_ = num_nodes() - 1;
+  map_ = info_.map();
   address_ = address;
 }
 
-void Info::Remove(const std::string& address) {
+void Info::Remove(int id) {
   bool succeeded;
   do {
     Get();
     assert(IsRunning());
     std::string old_info = info_.Serialize();
-    info_.MarkRemoveNode(address);
+    info_.MarkRemoveNode(id);
     succeeded =
         etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
@@ -120,7 +118,6 @@ void Info::Remove() {
         etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
   // There's no need to update the map
-  UpdateIndex();
 }
 
 void Info::Run() {
@@ -180,7 +177,7 @@ void Info::WatchCancel(void* call) {
 std::unordered_map<std::string, std::vector<int>> Info::Tasks() {
   std::lock_guard<std::mutex> lock(mutex_);
   std::unordered_map<std::string, std::vector<int>> tasks;
-  if (id_ < 0 || id_ >= info_.num_nodes())
+  if (id_ < 0)
     return tasks;
   for (int shard : info_.future(id_))
     tasks[info_.Address(map_[shard])].push_back(shard);
@@ -196,15 +193,18 @@ void Info::GiveShard(int shard) {
     succeeded =
         etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
-  UpdateMap();
+  {
+    std::lock_guard<std::mutex> lock(mutex_);
+    map_ = info_.map();
+  }
 }
 
-void Info::RemoveFuture(int shard) {
+void Info::MigrationOver(int shard) {
   bool succeeded;
   do {
     Get();
     std::string old_info = info_.Serialize();
-    info_.RemoveFuture(id_, shard);
+    info_.MigrationOver(shard);
     succeeded =
         etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
@@ -222,8 +222,11 @@ void Info::Print() {
   std::cout << "nodes: " << num_nodes() << std::endl;
   std::cout << "shards: " << num_shards() << std::endl;
   for (int i = 0; i < num_nodes(); i++) {
+    std::string address = info_.Address(i);
+    if (address.empty())
+      continue;
     std::cout << "node " << i << ":" << std::endl;
-    std::cout << "  address: " << info_.Address(i) << std::endl;
+    std::cout << "  address: " << address << std::endl;
     auto shards = info_.shards(i);
     if (shards.size() > 0)
       std::cout << "  shards: " << ListToString(shards) << " (" << shards.size()
@@ -234,25 +237,6 @@ void Info::Print() {
                 << ")" << std::endl;
     if (info_.IsRemoved(i))
       std::cout << "  remove: true" << std::endl;
-  }
-}
-
-void Info::UpdateMap() {
-  for (int i = 0; i < num_nodes(); i++) {
-    auto shards = info_.shards(i);
-    for (int shard : shards)
-      map_[shard] = i;
-  }
-}
-
-void Info::UpdateIndex() {
-  if (id_ == -1)
-    return;
-  int new_id = info_.IndexOf(address_);
-  if (id_ != new_id) {
-    if (new_id != -1)
-      std::cerr << id_ << ": Index changed to " << new_id << std::endl;
-    id_ = new_id;
   }
 }
 

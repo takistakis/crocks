@@ -81,17 +81,13 @@ class Info {
     return info_.shards(id_);
   };
 
-  std::vector<int> future() const {
-    return info_.future(id_);
-  };
-
   void Get();
 
   // Add a node with the given address and send the updated cluster
   // info to etcd, repeating the transaction until succeeded.
   void Add(const std::string& address);
 
-  void Remove(const std::string& address);
+  void Remove(int id);
 
   void Remove();
 
@@ -113,6 +109,10 @@ class Info {
     return info_.IsMigrating();
   }
 
+  bool IsMigrating(int shard) const {
+    return info_.IsMigrating(shard);
+  }
+
   bool NoMigrations() const {
     return info_.NoMigrations();
   }
@@ -125,7 +125,7 @@ class Info {
 
   void GiveShard(int shard);
 
-  void RemoveFuture(int shard);
+  void MigrationOver(int shard);
 
   void Print();
 
@@ -141,18 +141,13 @@ class Info {
   void Parse(const std::string& str) {
     std::lock_guard<std::mutex> lock(mutex_);
     info_.Parse(str);
-    UpdateMap();
-    UpdateIndex();
+    map_ = info_.map();
   }
-
-  void UpdateMap();
-
-  void UpdateIndex();
 
   mutable std::mutex mutex_;
   EtcdClient etcd_;
   InfoWrapper info_;
-  std::unordered_map<int, int> map_;
+  std::vector<int> map_;
   std::string address_;
   int id_ = -1;
 };

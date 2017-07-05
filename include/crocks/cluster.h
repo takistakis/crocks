@@ -19,6 +19,7 @@
 #define CROCKS_CLUSTER_H
 
 #include <string>
+#include <unordered_map>
 
 #include <crocks/status.h>
 
@@ -46,6 +47,7 @@ class Cluster {
 
   int num_nodes() const;
   int num_shards() const;
+  std::unordered_map<int, Node*> nodes() const;
 
   void Lock();
   void Unlock();

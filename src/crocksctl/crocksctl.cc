@@ -41,7 +41,7 @@ const std::string usage_message(
     "  list               Print every key.\n"
     "  dump               Print every key-value pair.\n"
     "  clear              Delete all keys.\n"
-    "  remove <address>   Remove node from the cluster.\n"
+    "  remove <id>        Remove node from the cluster.\n"
     "  info               Print cluster info.\n"
     "\n"
     "Options:\n"
@@ -135,9 +135,9 @@ void Clear(const std::string& address) {
   delete db;
 }
 
-void Remove(const std::string& etcd_address, const std::string& node_address) {
+void Remove(const std::string& etcd_address, int id) {
   crocks::Info info(etcd_address);
-  info.Remove(node_address);
+  info.Remove(id);
 }
 
 void Info(const std::string& address) {
@@ -211,7 +211,7 @@ int main(int argc, char** argv) {
 
   } else if (command == "remove") {
     EnsureArguments(argc - optind == 1);
-    Remove(etcd_address, argv[optind]);
+    Remove(etcd_address, std::stoi(argv[optind]));
 
   } else if (command == "info") {
     EnsureArguments(argc == optind);

@@ -725,14 +725,12 @@ void AsyncServer::WatchThread() {
         shard->set_importing(false);
         stream->Write(request);
         EnsureRpc(stream->Finish());
-        info_.RemoveFuture(shard_id);
+        info_.MigrationOver(shard_id);
         // Wait for the confirmation from etcd
-        std::vector<int> fut;
         do {
           bool ret = info_.WatchNext(call_);
           assert(!ret);
-          fut = info_.future();
-        } while (std::find(fut.begin(), fut.end(), shard_id) != fut.end());
+        } while (info_.IsMigrating(shard_id));
         std::cerr << info_.id() << ": Imported shard " << shard_id << std::endl;
       }
     }

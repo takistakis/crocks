@@ -37,7 +37,7 @@ class InfoWrapper {
  public:
   int num_shards() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return info_.num_shards();
+    return info_.shards_size();
   }
 
   int num_nodes() const {
@@ -48,20 +48,36 @@ class InfoWrapper {
   std::vector<int> shards(int id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<int> shards;
-    assert(id >= 0 && id < info_.nodes_size());
-    for (int shard : info_.nodes(id).shards())
-      shards.push_back(shard);
+    assert(id >= 0);
+    int i = 0;
+    for (const auto& shard : info_.shards()) {
+      if (shard.master() == id)
+        shards.push_back(i);
+      i++;
+    }
     return shards;
   };
 
   std::vector<int> future(int id) const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::vector<int> future;
-    assert(id >= 0 && id < info_.nodes_size());
-    for (int shard : info_.nodes(id).future())
-      future.push_back(shard);
+    assert(id >= 0);
+    int i = 0;
+    for (const auto& shard : info_.shards()) {
+      if (shard.migrating() && shard.to() == id)
+        future.push_back(i);
+      i++;
+    }
     return future;
   };
+
+  std::vector<int> map() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<int> map;
+    for (const auto& shard : info_.shards())
+      map.push_back(shard.master());
+    return map;
+  }
 
   std::string Serialize() const {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -92,12 +108,9 @@ class InfoWrapper {
 
   int IndexOf(const std::string& address) const {
     std::lock_guard<std::mutex> lock(mutex_);
-    int i = 0;
-    for (const auto& node : info_.nodes()) {
+    for (const auto& node : info_.nodes())
       if (node.address() == address)
-        return i;
-      i++;
-    }
+        return node.id();
     return -1;
   }
 
@@ -121,10 +134,15 @@ class InfoWrapper {
     return info_.state() == pb::ClusterInfo::MIGRATING;
   }
 
+  bool IsMigrating(int shard) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return info_.shards(shard).migrating();
+  }
+
   bool NoMigrations() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    for (const auto& node : info_.nodes())
-      if (node.future_size() > 0)
+    for (const auto& shard : info_.shards())
+      if (shard.migrating())
         return false;
     return true;
   }
@@ -139,11 +157,11 @@ class InfoWrapper {
     info_.set_state(pb::ClusterInfo::MIGRATING);
   }
 
-  void AddNode(const std::string& address);
+  int AddNode(const std::string& address);
 
-  void AddNodeWithNewShards(const std::string& address);
+  int AddNodeWithNewShards(const std::string& address);
 
-  void MarkRemoveNode(const std::string& address);
+  void MarkRemoveNode(int id);
 
   void RemoveNode(int id);
 
@@ -151,7 +169,7 @@ class InfoWrapper {
 
   void GiveShard(int id, int shard);
 
-  void RemoveFuture(int id, int shard);
+  void MigrationOver(int shard_id);
 
  private:
   pb::ClusterInfo info_;

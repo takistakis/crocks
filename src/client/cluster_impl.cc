@@ -17,6 +17,12 @@
 
 #include "src/client/cluster_impl.h"
 
+#include <assert.h>
+
+#include <utility>
+
+#include <grpc++/grpc++.h>
+
 #include "src/client/node.h"
 
 namespace crocks {
@@ -80,6 +86,10 @@ int Cluster::num_shards() const {
   return impl_->num_shards();
 }
 
+std::unordered_map<int, Node*> Cluster::nodes() const {
+  return impl_->nodes();
+}
+
 void Cluster::Lock() {
   return impl_->Lock();
 }
@@ -96,13 +106,17 @@ Cluster* DBOpen(const std::string& address) {
 Cluster::ClusterImpl::ClusterImpl(const std::string& address) : info_(address) {
   info_.Get();
   info_.Run();
-  for (const std::string& address : info_.Addresses())
-    nodes_.push_back(new Node(address));
+  int id = 0;
+  for (const auto& address : info_.Addresses()) {
+    if (!address.empty())
+      nodes_[id] = new Node(address);
+    id++;
+  }
 }
 
 Cluster::ClusterImpl::~ClusterImpl() {
-  for (Node* node : nodes_)
-    delete node;
+  for (const auto& pair : nodes_)
+    delete pair.second;
 }
 
 Status Cluster::ClusterImpl::Get(const std::string& key, std::string* value) {
@@ -182,29 +196,18 @@ std::string Cluster::ClusterImpl::AddressForShard(int shard, bool update) {
 
 void Cluster::ClusterImpl::Update() {
   info_.Get();
-  std::vector<Node*> new_nodes;
-  for (const std::string& address : info_.Addresses()) {
-    // For each node address remove the Node* with that address
-    // from the original vector and push it on the new one.
-    Node* node = nullptr;
-    for (auto it = nodes_.begin(); it != nodes_.end(); it++) {
-      Node* cur = *it;
-      if (cur->address() == address) {
-        nodes_.erase(it);
-        node = cur;
-        break;
-      }
+  int id = 0;
+  for (const auto& address : info_.Addresses()) {
+    if (address.empty()) {
+      delete nodes_[id];
+      nodes_[id] = nullptr;
+    } else if (nodes_[id] == nullptr) {
+      nodes_[id] = new Node(address);
+    } else {
+      assert(nodes_[id]->address() == address);
     }
-    // If there was no such node, create a new one
-    if (node == nullptr)
-      node = new Node(address);
-    new_nodes.push_back(node);
+    id++;
   }
-  // Delete the rest nodes (i.e. the ones that were removed)
-  for (Node* node : nodes_)
-    delete node;
-  // Finally replace the old vector
-  nodes_ = std::move(new_nodes);
 }
 
 }  // namespace crocks

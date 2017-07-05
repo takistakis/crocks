@@ -4,9 +4,17 @@ package crocks.pb;
 
 message NodeInfo {
   string address = 1;
-  repeated int32 shards = 2;
-  repeated int32 future = 3;
-  bool remove = 4;
+  int32 id = 2;
+  int32 num_shards = 3;
+  bool available = 4;
+  bool remove = 5;
+}
+
+message ShardInfo {
+  int32 master = 1;
+  bool migrating = 2;
+  int32 from = 3;
+  int32 to = 4;
 }
 
 message ClusterInfo {
@@ -14,9 +22,9 @@ message ClusterInfo {
     INIT = 0;
     RUNNING = 1;
     MIGRATING = 2;
-    SHUTDOWN = 3;
   }
   State state = 1;
-  int32 num_shards = 2;
+  int32 num_nodes = 2;
   repeated NodeInfo nodes = 3;
+  repeated ShardInfo shards = 4;
 }

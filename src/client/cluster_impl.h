@@ -19,7 +19,7 @@
 #define CROCKS_CLIENT_CLUSTER_IMPL_H
 
 #include <string>
-#include <vector>
+#include <unordered_map>
 
 #include <crocks/cluster.h>
 #include <crocks/status.h>
@@ -55,6 +55,10 @@ class Cluster::ClusterImpl {
     return info_.num_shards();
   }
 
+  std::unordered_map<int, Node*> nodes() const {
+    return nodes_;
+  }
+
   void Lock() {
     info_.Lock();
   }
@@ -67,7 +71,7 @@ class Cluster::ClusterImpl {
   void Update();
 
   Info info_;
-  std::vector<Node*> nodes_;
+  std::unordered_map<int, Node*> nodes_;
 };
 
 }  // namespace crocks

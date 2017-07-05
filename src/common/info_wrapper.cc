@@ -17,171 +17,125 @@
 
 #include "src/common/info_wrapper.h"
 
-#include <algorithm>
+#include <unordered_map>
+#include <utility>
 
 namespace crocks {
 
-std::vector<int> Distribution(int s, int n, const std::vector<bool>& skip) {
-  // Romoved nodes get 0 shards. For the rest, each pair must have the same
-  // number of shards, or a difference of one shard. Let s be the number of
-  // shards and n the number of nodes. Each node will be assigned either s/n
-  // or s/n+1 shards and all shards will have to add up to s. We achieve
-  // that by giving the first s%n nodes s/n+1 shards and the rest just s/n.
-  int N = n;
-  for (bool b : skip)
-    if (b)
-      n--;
-  std::vector<int> targets;
-  int j = 0;
-  for (int i = 0; i < N; i++) {
-    if (skip[i]) {
-      targets.push_back(0);
-      continue;
-    }
-    if (j < s % n)
-      targets.push_back(s / n + 1);
-    else
-      targets.push_back(s / n);
-    j++;
-  }
-  return targets;
-}
-
-void InfoWrapper::AddNode(const std::string& address) {
+int InfoWrapper::AddNode(const std::string& address) {
   std::lock_guard<std::mutex> lock(mutex_);
+  int id = info_.nodes_size();
   pb::NodeInfo* node = info_.add_nodes();
   node->set_address(address);
+  node->set_id(id);
+  node->set_available(true);
+  return id;
 }
 
-void InfoWrapper::AddNodeWithNewShards(const std::string& address) {
+int InfoWrapper::AddNodeWithNewShards(const std::string& address) {
   std::lock_guard<std::mutex> lock(mutex_);
+  int id = info_.nodes_size();
   pb::NodeInfo* node = info_.add_nodes();
   node->set_address(address);
-  for (int i = info_.num_shards(); i < info_.num_shards() + kShardsPerNode; i++)
-    node->add_shards(i);
-  info_.set_num_shards(info_.num_shards() + kShardsPerNode);
+  node->set_id(id);
+  node->set_num_shards(kShardsPerNode);
+  node->set_available(true);
+  for (int i = 0; i < kShardsPerNode; i++) {
+    pb::ShardInfo* shard = info_.add_shards();
+    shard->set_master(id);
+  }
+  return id;
 }
 
-void InfoWrapper::MarkRemoveNode(const std::string& address) {
+void InfoWrapper::MarkRemoveNode(int id) {
   std::lock_guard<std::mutex> lock(mutex_);
-  pb::NodeInfo* node;
-  for (int i = 0; i < info_.nodes_size(); i++) {
-    if (info_.nodes(i).address() == address) {
-      node = info_.mutable_nodes(i);
-      node->set_remove(true);
-      return;
-    }
-  }
-  assert(false);
+  pb::NodeInfo* node = info_.mutable_nodes(id);
+  if (node->address().empty())
+    return;
+  node->set_remove(true);
 }
 
 void InfoWrapper::RemoveNode(int id) {
   std::lock_guard<std::mutex> lock(mutex_);
-  info_.mutable_nodes()->SwapElements(id, info_.nodes_size() - 1);
-  info_.mutable_nodes()->RemoveLast();
+  info_.mutable_nodes(id)->Clear();
 }
 
 void InfoWrapper::RedistributeShards() {
   std::lock_guard<std::mutex> lock(mutex_);
-  std::vector<bool> skip;
-  int num_nodes = info_.nodes_size();
-  int num_shards = info_.num_shards();
-  for (int i = 0; i < num_nodes; i++) {
-    auto node = info_.nodes(i);
-    skip.push_back(node.remove() ? true : false);
-  }
-
-  std::vector<int> targets = Distribution(num_shards, num_nodes, skip);
+  int num_nodes = 0;
+  for (const auto& node : info_.nodes())
+    if (!node.remove() && !node.address().empty())
+      num_nodes++;
+  int num_shards = info_.shards_size();
 
   // Calculate diffs
   // Positive diff: the node has diff shards to give
   // Negative diff: the node has -diff shards to get
-  std::vector<int> diffs;
-  for (int i = 0; i < num_nodes; i++) {
-    auto node = info_.nodes(i);
-    diffs.push_back(node.shards_size() + node.future_size() - targets[i]);
+  std::unordered_map<int, int> diffs;
+  // Removed nodes get 0 shards. For the rest, each pair must have the same
+  // number of shards, or a difference of one shard. Let s be the number of
+  // shards and n the number of nodes. Each node will be assigned either s/n
+  // or s/n+1 shards and all shards will have to add up to s. We achieve
+  // that by giving the first s%n nodes s/n+1 shards and the rest just s/n.
+  int i = 0;
+  for (const auto& node : info_.nodes()) {
+    if (node.address().empty())
+      continue;
+    if (node.remove()) {
+      diffs[node.id()] = node.num_shards();
+      continue;
+    }
+    int target = num_shards / num_nodes;
+    if (i < num_shards % num_nodes)
+      target++;
+    diffs[node.id()] = node.num_shards() - target;
+    i++;
   }
-  for (int i = 0; i < num_nodes - 1; i++) {
-    pb::NodeInfo* left = info_.mutable_nodes(i);
-    for (int j = i + 1; j < num_nodes; j++) {
-      pb::NodeInfo* right = info_.mutable_nodes(j);
-      while (diffs[i] > 0 && diffs[j] < 0) {
-        int shard = left->shards(diffs[i] - 1);
-        diffs[i]--;
-        right->add_future(shard);
-        diffs[j]++;
+
+  i = 0;
+  for (const auto& node : info_.nodes()) {
+    int id = node.id();
+    while (diffs[id] < 0) {
+      pb::ShardInfo* shard = info_.mutable_shards(i);
+      if (diffs[shard->master()] > 0) {
+        shard->set_migrating(true);
+        shard->set_from(shard->master());
+        shard->set_to(id);
+        diffs[id]++;
+        diffs[shard->master()]--;
       }
-      while (diffs[j] > 0 && diffs[i] < 0) {
-        int shard = right->shards(diffs[j] - 1);
-        diffs[j]--;
-        left->add_future(shard);
-        diffs[i]++;
-      }
+      i++;
     }
   }
-  for (int i = 0; i < num_nodes; i++) {
-    auto node = info_.mutable_nodes(i);
-    std::sort(node->mutable_future()->begin(), node->mutable_future()->end());
-  }
-  for (int i = 0; i < num_nodes; i++) {
-    auto node = info_.nodes(i);
-    if (node.future_size() > 0)
-      assert(node.shards_size() + node.future_size() == targets[i]);
-  }
+  for (auto pair : diffs)
+    assert(pair.second == 0);
 }
 
-void InfoWrapper::GiveShard(int id, int shard) {
+void InfoWrapper::GiveShard(int id, int shard_id) {
   std::lock_guard<std::mutex> lock(mutex_);
-  bool found = false;
-  pb::NodeInfo* node = info_.mutable_nodes(id);
-  for (int i = 0; i < node->shards_size(); i++) {
-    if (node->shards(i) == shard) {
-      node->mutable_shards()->SwapElements(i, node->shards_size() - 1);
-      node->mutable_shards()->RemoveLast();
-      std::sort(node->mutable_shards()->begin(), node->mutable_shards()->end());
-      found = true;
-      break;
-    }
-  }
-  assert(found);
-  for (int i = 0; i < info_.nodes_size(); i++) {
-    pb::NodeInfo* node = info_.mutable_nodes(i);
-    for (int j = 0; j < node->future_size(); j++) {
-      if (node->future(j) == shard) {
-        node->add_shards(shard);
-        std::sort(node->mutable_shards()->begin(),
-                  node->mutable_shards()->end());
-        return;
-      }
-    }
-  }
-  assert(false);
+  pb::ShardInfo* shard = info_.mutable_shards(shard_id);
+  assert(shard->master() == id);
+  assert(shard->migrating());
+  assert(shard->from() == id);
+  assert(shard->to() != id);
+  shard->set_master(shard->to());
+  pb::NodeInfo* from = info_.mutable_nodes(shard->from());
+  pb::NodeInfo* to = info_.mutable_nodes(shard->to());
+  from->set_num_shards(from->num_shards() - 1);
+  to->set_num_shards(to->num_shards() + 1);
 }
 
-void InfoWrapper::RemoveFuture(int id, int shard) {
+void InfoWrapper::MigrationOver(int shard_id) {
   std::lock_guard<std::mutex> lock(mutex_);
-  pb::NodeInfo* node = info_.mutable_nodes(id);
-  for (int i = 0; i < node->future_size(); i++) {
-    if (node->future(i) == shard) {
-      node->mutable_future()->SwapElements(i, node->future_size() - 1);
-      node->mutable_future()->RemoveLast();
-      // After each removal, sort the list again. If it was the
-      // last shard to import, check if there are more pending
-      // migrations and if not, change the state back to RUNNING.
-      if (node->future_size() != 0) {
-        std::sort(node->mutable_future()->begin(),
-                  node->mutable_future()->end());
-      } else {
-        for (const auto& node : info_.nodes())
-          if (node.future_size() > 0)
-            return;
-        assert(info_.state() == pb::ClusterInfo::MIGRATING);
-        info_.set_state(pb::ClusterInfo::RUNNING);
-      }
+  pb::ShardInfo* shard = info_.mutable_shards(shard_id);
+  shard->set_migrating(false);
+  shard->clear_from();
+  shard->clear_to();
+  for (const auto& shard : info_.shards())
+    if (shard.migrating())
       return;
-    }
-  }
-  assert(false);
+  assert(info_.state() == pb::ClusterInfo::MIGRATING);
+  info_.set_state(pb::ClusterInfo::RUNNING);
 }
 
 }  // namespace crocks
