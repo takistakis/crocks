@@ -25,8 +25,10 @@
 #include <rocksdb/env.h>
 #include <rocksdb/iterator.h>
 #include <rocksdb/options.h>
+#include <rocksdb/slice.h>
 #include <rocksdb/sst_file_writer.h>
 #include <rocksdb/status.h>
+#include <rocksdb/write_batch.h>
 
 #include "gen/crocks.pb.h"
 #include "src/server/util.h"
@@ -36,14 +38,26 @@
 
 namespace crocks {
 
+std::string Key(int shard, const std::string& key) {
+  return "shard_" + std::to_string(shard) + "_" + key;
+}
+
 std::string Filename(const std::string& path, int shard, int num) {
   return path + "/shard_" + std::to_string(shard) + "_" + std::to_string(num);
 }
 
-ShardMigrator::ShardMigrator(rocksdb::DB* db, int shard)
-    : db_(db), total_(0), num_(0), shard_(shard), empty_(false), done_(false) {}
+ShardMigrator::ShardMigrator(rocksdb::DB* db, int shard, int start_from)
+    : db_(db),
+      total_(0),
+      num_(start_from),
+      shard_(shard),
+      done_(false),
+      finished_(false) {}
 
 void ShardMigrator::DumpShard(rocksdb::ColumnFamilyHandle* cf) {
+  if (RestoreState())
+    return;
+
   rocksdb::Status s;
   rocksdb::Options options(db_->GetOptions());
   rocksdb::ExternalSstFileInfo file_info;
@@ -54,7 +68,7 @@ void ShardMigrator::DumpShard(rocksdb::ColumnFamilyHandle* cf) {
   bool open = false;
   it->SeekToFirst();
   if (!it->Valid()) {
-    empty_ = true;
+    done_ = true;
     delete it;
     return;
   }
@@ -89,26 +103,84 @@ void ShardMigrator::DumpShard(rocksdb::ColumnFamilyHandle* cf) {
 
   total_ = num;
   assert(largest_keys_.size() == total_);
+
+  if (num_ >= total_)
+    done_ = true;
+
+  SaveState();
+}
+
+void ShardMigrator::SaveState() {
+  rocksdb::WriteBatch batch;
+  batch.Put(Key(shard_, "dumped"), "true");
+  batch.Put(Key(shard_, "total"), std::to_string(total_));
+  for (unsigned int i = 0; i < total_; i++) {
+    std::string key = std::to_string(i) + "_largest_key";
+    batch.Put(Key(shard_, key), largest_keys_[i]);
+  }
+  rocksdb::Status s = db_->Write(rocksdb::WriteOptions(), &batch);
+  EnsureRocksdb("Write(migrator_state)", s);
+}
+
+bool ShardMigrator::RestoreState() {
+  rocksdb::Status s;
+  rocksdb::ReadOptions options;
+  std::string value;
+  s = db_->Get(options, Key(shard_, "dumped"), &value);
+  if (s.IsNotFound())
+    return false;
+  EnsureRocksdb("Get(dumped)", s);
+  if (value == "true") {
+    s = db_->Get(options, Key(shard_, "total"), &value);
+    EnsureRocksdb("Get(total)", s);
+    total_ = std::stoi(value);
+    for (unsigned int i = 0; i < total_; i++) {
+      std::string key = std::to_string(i) + "_largest_key";
+      s = db_->Get(options, Key(shard_, key), &value);
+      EnsureRocksdb("Get(largest_key)", s);
+      largest_keys_.push_back(value);
+    }
+    assert(num_ <= total_);
+    if (num_ == total_)
+      done_ = true;
+    return true;
+  }
+  return false;
+}
+
+void ShardMigrator::ClearState() {
+  rocksdb::WriteBatch batch;
+  batch.Delete(Key(shard_, "dumped"));
+  batch.Delete(Key(shard_, "total"));
+  for (unsigned int i = 0; i < total_; i++) {
+    std::string key = std::to_string(i) + "_largest_key";
+    batch.Delete(Key(shard_, key));
+  }
+  rocksdb::Status s = db_->Write(rocksdb::WriteOptions(), &batch);
+  EnsureRocksdb("Write(migrator_state)", s);
+  // Delete the last file
+  if (!filename_.empty())
+    if (remove(filename_.c_str()) < 0)
+      perror(filename_.c_str());
 }
 
 bool ShardMigrator::ReadChunk(pb::MigrateResponse* response) {
-  if (done_)
+  // When the last chunk is sent, we set done = true.
+  // The next message will have finished = true and will be the last.
+  if (finished_)
     return false;
 
-  if (empty_) {
-    // If no file was written the shard was empty so we send a
-    // single message with an empty chunk and the empty flag set
-    // to true. XXX: Maybe we could ditch the empty field and at
-    // the receiving server check if the first message has an empty
-    // chunk. FWIW protobuf bools are inexpensive on the wire.
-    assert(num_ == 0 && !in_.is_open());
-    response->set_empty(true);
+  if (done_) {
     response->set_finished(true);
-    done_ = true;
+    finished_ = true;
     return true;
   }
 
   if (!in_.is_open()) {
+    // Delete the previous file
+    if (!filename_.empty())
+      if (remove(filename_.c_str()) < 0)
+        perror(filename_.c_str());
     filename_ = Filename(db_->GetName(), shard_, num_);
     in_.open(filename_, std::ifstream::binary);
     if (!in_) {
@@ -128,30 +200,23 @@ bool ShardMigrator::ReadChunk(pb::MigrateResponse* response) {
     response->set_eof(true);
     response->set_largest_key(largest_keys_[num_++]);
     in_.close();
-    if (remove(filename_.c_str()) < 0)
-      perror(filename_.c_str());
+    // We cannot delete the file here because we may have to send it again
   }
 
   // On the last message set done_ = true, so that the
   // next time ReadChunk is called, it will return false;
-  if (num_ == total_ && !in_.is_open()) {
-    response->set_finished(true);
+  if (num_ == total_ && !in_.is_open())
     done_ = true;
-  }
 
   return true;
 }
 
 ShardImporter::ShardImporter(rocksdb::DB* db, int shard)
-    : db_(db), num_(0), shard_(shard) {}
+    : db_(db), num_(0), shard_(shard) {
+  RestoreState();
+}
 
 bool ShardImporter::WriteChunk(const pb::MigrateResponse& response) {
-  if (response.empty()) {
-    // If the shard is empty, WriteChunk is supposed to be called only once
-    assert(num_ == 0 && !out_.is_open());
-    return false;
-  }
-
   if (!out_.is_open()) {
     // Open next file
     filename_ = Filename(db_->GetName(), shard_, num_++);
@@ -169,9 +234,43 @@ bool ShardImporter::WriteChunk(const pb::MigrateResponse& response) {
   if (response.eof()) {
     largest_key_ = response.largest_key();
     out_.close();
+    SaveState();
     return true;
   }
   return false;
+}
+
+void ShardImporter::SaveState() {
+  rocksdb::WriteBatch batch;
+  batch.Put(Key(shard_, "next_num"), std::to_string(num_));
+  batch.Put(Key(shard_, "largest_key"), largest_key_);
+  batch.Put(Key(shard_, "filename"), filename_);
+  rocksdb::Status s = db_->Write(rocksdb::WriteOptions(), &batch);
+  EnsureRocksdb("Write(importer_state)", s);
+}
+
+void ShardImporter::RestoreState() {
+  rocksdb::Status s;
+  rocksdb::ReadOptions options;
+  s = db_->Get(options, Key(shard_, "largest_key"), &largest_key_);
+  if (s.IsNotFound())
+    return;
+  EnsureRocksdb("Get(largest_key)", s);
+  s = db_->Get(options, Key(shard_, "filename"), &filename_);
+  EnsureRocksdb("Get(filename)", s);
+  std::string next_num;
+  s = db_->Get(options, Key(shard_, "next_num"), &next_num);
+  EnsureRocksdb("Get(next_num)", s);
+  num_ = std::stoi(next_num);
+}
+
+void ShardImporter::ClearState() {
+  rocksdb::WriteBatch batch;
+  batch.Delete(Key(shard_, "next_num"));
+  batch.Delete(Key(shard_, "largest_key"));
+  batch.Delete(Key(shard_, "filename"));
+  rocksdb::Status s = db_->Write(rocksdb::WriteOptions(), &batch);
+  EnsureRocksdb("Write(importer_state)", s);
 }
 
 }  // namespace crocks

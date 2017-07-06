@@ -121,11 +121,15 @@ class Info {
   bool WatchNext(void* call);
   void WatchCancel(void* call);
 
-  std::unordered_map<std::string, std::vector<int>> Tasks();
+  std::unordered_map<int, std::vector<int>> Tasks() const;
 
   void GiveShard(int shard);
 
   void MigrationOver(int shard);
+
+  bool IsAvailable(int id) const;
+
+  void SetAvailable(int id, bool available);
 
   void Print();
 

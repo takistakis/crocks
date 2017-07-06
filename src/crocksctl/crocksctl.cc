@@ -25,6 +25,7 @@
 #include <crocks/iterator.h>
 #include <crocks/status.h>
 #include <crocks/write_batch.h>
+#include "src/client/node.h"
 #include "src/common/info.h"
 
 const std::string usage_message(
@@ -38,6 +39,7 @@ const std::string usage_message(
     "  del <key>          Delete key.\n"
     "  run                Change cluster state to RUNNING.\n"
     "  migrate            Change cluster state to MIGRATING.\n"
+    "  health             Check the health of the cluster.\n"
     "  list               Print every key.\n"
     "  dump               Print every key-value pair.\n"
     "  clear              Delete all keys.\n"
@@ -99,6 +101,30 @@ void Run(const std::string& address) {
 void Migrate(const std::string& address) {
   crocks::Info info(address);
   info.Migrate();
+}
+
+void Health(const std::string& address) {
+  crocks::Info info(address);
+  info.Get();
+  for (int i = 0; i < info.num_nodes(); i++) {
+    std::string address = info.Address(i);
+    if (address.empty())
+      continue;
+    if (!info.IsAvailable(i)) {
+      std::cout << address << ": DOWN" << std::endl;
+      continue;
+    }
+    crocks::Node* node = new crocks::Node(address);
+    std::string value;
+    crocks::Status status = node->Get("test", &value);
+    delete node;
+    if (status.IsUnavailable()) {
+      info.SetAvailable(i, false);
+      std::cout << address << ": DOWN" << std::endl;
+    } else {
+      std::cout << address << ": OK" << std::endl;
+    }
+  }
 }
 
 void List(const std::string& address) {
@@ -196,6 +222,10 @@ int main(int argc, char** argv) {
   } else if (command == "migrate") {
     EnsureArguments(argc == optind);
     Migrate(etcd_address);
+
+  } else if (command == "health") {
+    EnsureArguments(argc == optind);
+    Health(etcd_address);
 
   } else if (command == "list") {
     EnsureArguments(argc == optind);

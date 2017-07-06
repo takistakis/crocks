@@ -37,10 +37,23 @@ std::string Filename(const std::string& path, int shard, int num);
 
 class ShardMigrator {
  public:
-  ShardMigrator(rocksdb::DB* db, int shard);
+  ShardMigrator(rocksdb::DB* db, int shard, int start_from);
 
   void DumpShard(rocksdb::ColumnFamilyHandle* cf);
 
+  // Save the state (whether the shard has been dumped,
+  // the total number of SSTs and the largest key of each
+  // SST), in order to be able to recover from crashes.
+  void SaveState();
+
+  // Return whether the shard has already been dumped,
+  // and if it has restore the state from the database.
+  bool RestoreState();
+
+  void ClearState();
+
+  // Read the next chunk, and put it in the given response.
+  // Return whether there are more chunks to read.
   bool ReadChunk(pb::MigrateResponse* response);
 
  private:
@@ -54,6 +67,7 @@ class ShardMigrator {
 
   std::string filename_;
   bool done_;
+  bool finished_;
 };
 
 class ShardImporter {
@@ -69,6 +83,14 @@ class ShardImporter {
   std::string largest_key() const {
     return largest_key_;
   }
+
+  int num() const {
+    return num_;
+  }
+
+  void SaveState();
+  void RestoreState();
+  void ClearState();
 
  private:
   rocksdb::DB* db_;

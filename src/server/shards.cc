@@ -84,7 +84,9 @@ void Shard::Ingest(const std::string& filename,
   // that it won't overwrite any newer keys
   ifo.ingest_behind = true;
   rocksdb::Status s = db_->IngestExternalFile(cf_, files, ifo);
-  EnsureRocksdb("IngestExternalFile", s);
+  // Skip IOError. We may have ingested the file before crashing.
+  if (!s.IsIOError())
+    EnsureRocksdb("IngestExternalFile", s);
   {
     std::lock_guard<std::mutex> lock(largest_key_mutex_);
     largest_key_ = largest_key;
@@ -104,13 +106,17 @@ bool Shard::Ref() {
   return true;
 }
 
-void Shard::Unref(bool migrating) {
+bool Shard::Unref(bool migrating) {
   std::lock_guard<std::mutex> lock(ref_mutex_);
+  if (migrating && migrating_)
+    // We have already called this with migrating == true
+    return false;
   refs_--;
   if (migrating)
     migrating_ = true;
   if (refs_ == 0)
     zero_refs_.set_value();
+  return true;
 }
 
 void Shard::WaitRefs() {
@@ -118,7 +124,7 @@ void Shard::WaitRefs() {
   f.wait();
 }
 
-Shards::Shards(rocksdb::DB* db, std::vector<int> shards) : db_(db) {
+Shards::Shards(rocksdb::DB* db, const std::vector<int>& shards) : db_(db) {
   std::vector<std::string> names;
   for (int shard : shards)
     names.push_back(std::to_string(shard));
@@ -129,6 +135,20 @@ Shards::Shards(rocksdb::DB* db, std::vector<int> shards) : db_(db) {
   int i = 0;
   for (int shard : shards)
     shards_[shard] = std::make_shared<Shard>(db_, handles[i++], shard);
+}
+
+Shards::Shards(rocksdb::DB* db,
+               const std::vector<rocksdb::ColumnFamilyHandle*>& handles)
+    : db_(db) {
+  // TODO: Check that we have every column
+  // family that we should, according to etcd.
+  for (auto cf : handles) {
+    std::string name = cf->GetName();
+    if (name == "default")
+      continue;
+    int shard = std::stoi(name);
+    shards_[shard] = std::make_shared<Shard>(db_, cf, shard);
+  }
 }
 
 std::shared_ptr<Shard> Shards::Add(int id, const std::string& old_address) {

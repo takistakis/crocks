@@ -17,7 +17,6 @@
 
 #include "src/common/info_wrapper.h"
 
-#include <unordered_map>
 #include <utility>
 
 namespace crocks {
@@ -111,9 +110,26 @@ void InfoWrapper::RedistributeShards() {
     assert(pair.second == 0);
 }
 
+std::unordered_map<int, std::vector<int>> InfoWrapper::Tasks(int id) const {
+  std::lock_guard<std::mutex> lock(mutex_);
+  std::unordered_map<int, std::vector<int>> tasks;
+  assert(id >= 0);
+  int i = 0;
+  for (const auto& shard : info_.shards()) {
+    if (shard.migrating() && shard.to() == id)
+      tasks[shard.from()].push_back(i);
+    i++;
+  }
+  return tasks;
+}
+
 void InfoWrapper::GiveShard(int id, int shard_id) {
   std::lock_guard<std::mutex> lock(mutex_);
   pb::ShardInfo* shard = info_.mutable_shards(shard_id);
+  if (shard->master() != id)
+    // We have already given the shard. The call must have been
+    // interrupted after giving it and now we're resuming.
+    return;
   assert(shard->master() == id);
   assert(shard->migrating());
   assert(shard->from() == id);
@@ -136,6 +152,12 @@ void InfoWrapper::MigrationOver(int shard_id) {
       return;
   assert(info_.state() == pb::ClusterInfo::MIGRATING);
   info_.set_state(pb::ClusterInfo::RUNNING);
+}
+
+void InfoWrapper::SetAvailable(int id, bool available) {
+  std::lock_guard<std::mutex> lock(mutex_);
+  pb::NodeInfo* node = info_.mutable_nodes(id);
+  node->set_available(available);
 }
 
 }  // namespace crocks

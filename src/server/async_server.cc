@@ -20,10 +20,10 @@
 #include <assert.h>
 #include <stdlib.h>
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <iostream>
+#include <map>
 #include <unordered_map>
 #include <utility>
 
@@ -498,6 +498,13 @@ class MigrateCall final : public Call {
       std::cerr << "Migrate request cancelled. Finishing." << std::endl;
       stream_.Finish(grpc::Status::CANCELLED, this);
       status_ = FINISH;
+      auto metadata = ctx_.client_metadata();
+      auto pair = metadata.find("id");
+      assert(pair != metadata.end());
+      int node_id = std::stoi(pair->second.data());
+      std::cerr << data_->info->id() << ": Setting node " << node_id
+                << " as unavailable" << std::endl;
+      data_->info->SetAvailable(node_id, false);
       return;
     }
 
@@ -519,11 +526,21 @@ class MigrateCall final : public Call {
         std::cerr << data_->info->id() << ": Migrating shard " << shard_id
                   << std::endl;
         shard = data_->shards->at(shard_id);
-        shard->Unref(true);
+        if (!shard) {
+          std::cerr << data_->info->id() << ": Already given and deleted"
+                    << std::endl;
+          stream_.Finish(invalid_status, this);
+          status_ = FINISH;
+          break;
+        }
+        retval = shard->Unref(true);
+        if (!retval)
+          std::cerr << data_->info->id() << ": Resuming from SST "
+                    << request_.start_from() << std::endl;
         // From now on requests for the shard are rejected
         data_->info->GiveShard(shard_id);
         migrator_ = std::unique_ptr<ShardMigrator>(
-            new ShardMigrator(data_->db, shard_id));
+            new ShardMigrator(data_->db, shard_id, request_.start_from()));
         // DumpShard() creates SST files by iterating on the shard. We can't
         // modify the database after the iterator snapshot is taken, and
         // there may be some unfinished requests. So we have to wait for
@@ -534,7 +551,8 @@ class MigrateCall final : public Call {
         // that happen from the moment the shard is given until the commit,
         // will appear to have happened after the commit. However waiting for
         // the references before giving the shard might cause a deadlock.
-        shard->WaitRefs();
+        if (retval)
+          shard->WaitRefs();
         migrator_->DumpShard(shard->cf());
         retval = migrator_->ReadChunk(&response);
         assert(retval);
@@ -554,15 +572,16 @@ class MigrateCall final : public Call {
 
       case DONE:
         stream_.Finish(grpc::Status::OK, this);
-        status_ = FINISH;
-        break;
-
-      case FINISH:
         data_->shards->Remove(request_.shard());
+        migrator_->ClearState();
         if (data_->shards->empty()) {
           data_->info->Remove();
           shutdown.store(true);
         }
+        status_ = FINISH;
+        break;
+
+      case FINISH:
         delete this;
         break;
     }
@@ -589,10 +608,7 @@ AsyncServer::AsyncServer(const std::string& etcd_address,
     : dbpath_(dbpath),
       options_(DefaultRocksdbOptions()),
       info_(etcd_address),
-      num_threads_(num_threads) {
-  rocksdb::Status s = rocksdb::DB::Open(options_, dbpath_, &db_);
-  EnsureRocksdb("Open", s);
-}
+      num_threads_(num_threads) {}
 
 AsyncServer::~AsyncServer() {
   std::cerr << "Shutting down..." << std::endl;
@@ -614,6 +630,7 @@ AsyncServer::~AsyncServer() {
 
 void AsyncServer::Init(const std::string& listening_address,
                        const std::string& hostname) {
+  // Initialize gRPC
   grpc::ServerBuilder builder;
   int selected_port;
   builder.AddListeningPort(listening_address, grpc::InsecureServerCredentials(),
@@ -627,10 +644,38 @@ void AsyncServer::Init(const std::string& listening_address,
     std::cerr << "Could not bind to a port" << std::endl;
     exit(EXIT_FAILURE);
   }
+
+  // Announce server to etcd
   std::string port = std::to_string(selected_port);
   std::string node_address = hostname + ":" + port;
+  // TODO: This knows if we are resuming. We could return a relevant
+  // bool, and if resuming check that we have the right column families.
   info_.Add(node_address);
-  shards_ = new Shards(db_, info_.shards());
+
+  // Open RocksDB database
+  std::vector<std::string> column_families;
+  db_->ListColumnFamilies(options_, dbpath_, &column_families);
+  if (!column_families.empty()) {
+    std::cerr << info_.id() << ": Recovering from crash" << std::endl;
+    column_families.push_back("default");
+    std::vector<rocksdb::ColumnFamilyDescriptor> cf_descriptors;
+    rocksdb::ColumnFamilyOptions cf_options;
+    for (auto name : column_families) {
+      rocksdb::ColumnFamilyDescriptor descriptor(name, cf_options);
+      cf_descriptors.push_back(descriptor);
+    }
+    std::vector<rocksdb::ColumnFamilyHandle*> cf_handles;
+    rocksdb::Status s =
+        rocksdb::DB::Open(options_, dbpath_, cf_descriptors, &cf_handles, &db_);
+    EnsureRocksdb("Open", s);
+    shards_ = new Shards(db_, cf_handles);
+  } else {
+    rocksdb::Status s = rocksdb::DB::Open(options_, dbpath_, &db_);
+    EnsureRocksdb("Open", s);
+    shards_ = new Shards(db_, info_.shards());
+  }
+
+  // Watch etcd for changes to the cluster
   call_ = info_.Watch();
   // Create a thread that watches the "info" key and repeatedly
   // reads for updates. Gets cleaned up by the destructor.
@@ -688,22 +733,81 @@ void AsyncServer::ServeThread(int i) {
 }
 
 void AsyncServer::WatchThread() {
-  while (!info_.WatchNext(call_)) {
+  do {
     for (const auto& task : info_.Tasks()) {
-      std::string address = task.first;
+      int node_id = task.first;
+      std::string address = info_.Address(node_id);
       for (int shard_id : task.second) {
-        Shard* shard = shards_->Add(shard_id, address).get();
+        if (!info_.IsAvailable(node_id)) {
+          std::cerr << info_.id() << ": Node " << node_id
+                    << " is unavailable. Skipping request for shard "
+                    << shard_id << "." << std::endl;
+          continue;
+        }
+        std::cerr << info_.id() << ": Requesting shard " << shard_id
+                  << " from node " << node_id << std::endl;
+        Shard* shard;
+        // If it does not belong to us, we may
+        // or may not have it and we must check.
+        if (info_.IndexForShard(shard_id) != info_.id()) {
+          if (!shards_->at(shard_id))
+            // We don't have it so create it
+            shard = shards_->Add(shard_id, address).get();
+          else
+            // We managed to create it before crashing. We
+            // should ensure that it is empty as it should.
+            shard = shards_->at(shard_id).get();
+        } else {
+          shard = shards_->at(shard_id).get();
+        }
+
+        ShardImporter importer(db_, shard_id);
+        // If we are recovering from a crash there might be a file
+        // that we didn't manage to ingest. Try to do that. If
+        // there isn't such a file, Ingest() will silently fail.
+        if (!importer.filename().empty())
+          shard->Ingest(importer.filename(), importer.largest_key());
 
         pb::MigrateRequest request;
         pb::MigrateResponse response;
         grpc::ClientContext context;
+        context.AddMetadata("id", std::to_string(info_.id()));
         std::unique_ptr<pb::RPC::Stub> stub(pb::RPC::NewStub(
             grpc::CreateChannel(address, grpc::InsecureChannelCredentials())));
 
         // Send a request for the shard
         request.set_shard(shard_id);
+        request.set_start_from(importer.num());
         auto stream = stub->Migrate(&context);
-        stream->Write(request);
+        if (!stream->Write(request)) {
+          std::cerr << "Error on first write" << std::endl;
+          grpc::Status status = stream->Finish();
+          HandleError(status, node_id);
+          continue;
+        }
+
+        // The first read should be ok. Even if the shard is empty,
+        // one message will be sent. So if it is not ok, it means he
+        // crashed. We cannot know if he managed to give the shard.
+        if (!stream->Read(&response)) {
+          std::cerr << "Error on first read" << std::endl;
+          grpc::Status status = stream->Finish();
+          if (status.error_code() == grpc::StatusCode::INVALID_ARGUMENT) {
+            std::cerr << "Migration was already finished but didn't manage to "
+                         "announce it before crashing"
+                      << std::endl;
+            info_.MigrationOver(shard_id);
+            // FIXME: If we crash here the state never gets cleared
+            importer.ClearState();
+            do {
+              bool ret = info_.WatchNext(call_);
+              assert(!ret);
+            } while (info_.IsMigrating(shard_id));
+          } else {
+            HandleError(status, node_id);
+          }
+          continue;
+        }
 
         // Once the old master gets the request, he is supposed to pass
         // ownership to us by informing etcd. We wait for that, so that
@@ -714,18 +818,26 @@ void AsyncServer::WatchThread() {
         }
         // From now on requests for the shard are accepted
 
-        ShardImporter importer(db_, shard_id);
-        while (stream->Read(&response)) {
+        do {
+          if (response.finished())
+            break;
           // If true an SST is ready to be imported
           if (importer.WriteChunk(response))
             shard->Ingest(importer.filename(), importer.largest_key());
-          if (response.finished())
-            break;
-        }
+        } while (stream->Read(&response));
+
         shard->set_importing(false);
         stream->Write(request);
-        EnsureRpc(stream->Finish());
+        grpc::Status status = stream->Finish();
+        if (!status.ok()) {
+          std::cerr << "Error on finish" << std::endl;
+          HandleError(status, node_id);
+          continue;
+        }
+
         info_.MigrationOver(shard_id);
+        // FIXME: If we crash here the state never gets cleared
+        importer.ClearState();
         // Wait for the confirmation from etcd
         do {
           bool ret = info_.WatchNext(call_);
@@ -734,6 +846,17 @@ void AsyncServer::WatchThread() {
         std::cerr << info_.id() << ": Imported shard " << shard_id << std::endl;
       }
     }
+  } while (!info_.WatchNext(call_));
+}
+
+void AsyncServer::HandleError(const grpc::Status& status, int node_id) {
+  if (status.error_code() == grpc::StatusCode::UNAVAILABLE) {
+    std::cerr << info_.id() << ": Setting node " << node_id << " as unavailable"
+              << std::endl;
+    info_.SetAvailable(node_id, false);
+  } else if (!status.ok()) {
+    // For every error other than UNAVAILABLE, exit
+    EnsureRpc(status);
   }
 }
 

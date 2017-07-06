@@ -25,6 +25,7 @@
 
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "gen/info.pb.h"
@@ -147,6 +148,11 @@ class InfoWrapper {
     return true;
   }
 
+  bool IsAvailable(int id) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    return info_.nodes(id).available();
+  }
+
   void SetRunning() {
     std::lock_guard<std::mutex> lock(mutex_);
     info_.set_state(pb::ClusterInfo::RUNNING);
@@ -167,9 +173,13 @@ class InfoWrapper {
 
   void RedistributeShards();
 
+  std::unordered_map<int, std::vector<int>> Tasks(int id) const;
+
   void GiveShard(int id, int shard);
 
   void MigrationOver(int shard_id);
+
+  void SetAvailable(int id, bool available);
 
  private:
   pb::ClusterInfo info_;

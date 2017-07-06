@@ -120,7 +120,19 @@ Cluster::ClusterImpl::~ClusterImpl() {
 }
 
 Status Cluster::ClusterImpl::Get(const std::string& key, std::string* value) {
-  Status status = NodeForKey(key)->Get(key, value);
+  Node* node = NodeForKey(key);
+  Status status = node->Get(key, value);
+  while (status.IsUnavailable()) {
+    Update();
+    Node* new_node = NodeForKey(key);
+    if (new_node != node) {
+      status = new_node->Get(key, value);
+      node = new_node;
+    } else {
+      info_.SetAvailable(IndexForKey(key), false);
+      break;
+    }
+  }
   while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
     Update();
     status = NodeForKey(key)->Get(key, value);
@@ -130,7 +142,19 @@ Status Cluster::ClusterImpl::Get(const std::string& key, std::string* value) {
 
 Status Cluster::ClusterImpl::Put(const std::string& key,
                                  const std::string& value) {
-  Status status = NodeForKey(key)->Put(key, value);
+  Node* node = NodeForKey(key);
+  Status status = node->Put(key, value);
+  while (status.IsUnavailable()) {
+    Update();
+    Node* new_node = NodeForKey(key);
+    if (new_node != node) {
+      status = new_node->Put(key, value);
+      node = new_node;
+    } else {
+      info_.SetAvailable(IndexForKey(key), false);
+      break;
+    }
+  }
   while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
     Update();
     status = NodeForKey(key)->Put(key, value);
@@ -139,7 +163,19 @@ Status Cluster::ClusterImpl::Put(const std::string& key,
 }
 
 Status Cluster::ClusterImpl::Delete(const std::string& key) {
-  Status status = NodeForKey(key)->Delete(key);
+  Node* node = NodeForKey(key);
+  Status status = node->Delete(key);
+  while (status.IsUnavailable()) {
+    Update();
+    Node* new_node = NodeForKey(key);
+    if (new_node != node) {
+      status = new_node->Delete(key);
+      node = new_node;
+    } else {
+      info_.SetAvailable(IndexForKey(key), false);
+      break;
+    }
+  }
   while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
     Update();
     status = NodeForKey(key)->Delete(key);
@@ -148,7 +184,19 @@ Status Cluster::ClusterImpl::Delete(const std::string& key) {
 }
 
 Status Cluster::ClusterImpl::SingleDelete(const std::string& key) {
-  Status status = NodeForKey(key)->SingleDelete(key);
+  Node* node = NodeForKey(key);
+  Status status = node->SingleDelete(key);
+  while (status.IsUnavailable()) {
+    Update();
+    Node* new_node = NodeForKey(key);
+    if (new_node != node) {
+      status = new_node->SingleDelete(key);
+      node = new_node;
+    } else {
+      info_.SetAvailable(IndexForKey(key), false);
+      break;
+    }
+  }
   while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
     Update();
     status = NodeForKey(key)->SingleDelete(key);
@@ -158,7 +206,19 @@ Status Cluster::ClusterImpl::SingleDelete(const std::string& key) {
 
 Status Cluster::ClusterImpl::Merge(const std::string& key,
                                    const std::string& value) {
-  Status status = NodeForKey(key)->Merge(key, value);
+  Node* node = NodeForKey(key);
+  Status status = node->Merge(key, value);
+  while (status.IsUnavailable()) {
+    Update();
+    Node* new_node = NodeForKey(key);
+    if (new_node != node) {
+      status = new_node->Merge(key, value);
+      node = new_node;
+    } else {
+      info_.SetAvailable(IndexForKey(key), false);
+      break;
+    }
+  }
   while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
     Update();
     status = NodeForKey(key)->Merge(key, value);

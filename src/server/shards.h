@@ -74,7 +74,7 @@ class Shard {
 
   // Decrease the reference counter of the shard. Once called with migrating
   // set to true, it's not possible to increase the counter again.
-  void Unref(bool migrating = false);
+  bool Unref(bool migrating = false);
 
   // Wait for the reference counter to reach 0
   void WaitRefs();
@@ -95,7 +95,9 @@ class Shard {
 
 class Shards {
  public:
-  Shards(rocksdb::DB* db, std::vector<int> shards);
+  Shards(rocksdb::DB* db, const std::vector<int>& shards);
+  Shards(rocksdb::DB* db,
+         const std::vector<rocksdb::ColumnFamilyHandle*>& handles);
 
   std::shared_ptr<Shard> at(int id) {
     std::lock_guard<std::mutex> lock(mutex_);

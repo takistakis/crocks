@@ -43,8 +43,8 @@ class AsyncServer final {
               int num_threads);
   ~AsyncServer();
 
-  // Start listening for incoming client connections,
-  // announce server to etcd and start watching for changes
+  // Start listening for incoming client connections, announce server to
+  // etcd, open RocksDB database, and start watching etcd for changes
   void Init(const std::string& listening_address, const std::string& hostname);
 
   void Run();
@@ -52,6 +52,7 @@ class AsyncServer final {
  private:
   void ServeThread(int i);
   void WatchThread();
+  void HandleError(const grpc::Status& status, int node_id);
 
   std::string dbpath_;
   pb::RPC::AsyncService service_;

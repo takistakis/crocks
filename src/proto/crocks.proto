@@ -80,12 +80,13 @@ message IteratorResponse {
 
 message MigrateRequest {
   int32 shard = 1;
+  // First SST to send. Specify a number higher than 0 to resume.
+  int32 start_from = 2;
 }
 
 message MigrateResponse {
-  bool empty = 1;
-  bool eof = 2;
-  bool finished = 3;
-  bytes chunk = 4;
-  bytes largest_key = 5;
+  bool eof = 1;
+  bool finished = 2;
+  bytes chunk = 3;
+  bytes largest_key = 4;
 }

@@ -108,6 +108,10 @@ class Status {
     return rocksdb_code_ == rocksdb::StatusCode::NOT_FOUND;
   }
 
+  bool IsUnavailable() const {
+    return grpc_code_ == grpc::StatusCode::UNAVAILABLE;
+  }
+
  private:
   grpc::StatusCode grpc_code_;
   rocksdb::StatusCode rocksdb_code_;

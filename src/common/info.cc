@@ -77,7 +77,18 @@ void Info::Add(const std::string& address) {
     std::string old_info;
     if (etcd_.Get(kInfoKey, &old_info)) {
       Parse(old_info);
-      if (info_.IsInit()) {
+      int id = info_.IndexOf(address);
+      if (id >= 0) {
+        if (info_.IsAvailable(id)) {
+          std::cerr << "There is another node listening on " << address
+                    << std::endl
+                    << "If you are trying to recover from crashing "
+                    << "run \"crocksctl health\" first" << std::endl;
+          exit(EXIT_FAILURE);
+        }
+        info_.SetAvailable(id, true);
+        id_ = id;
+      } else if (info_.IsInit()) {
         id_ = info_.AddNodeWithNewShards(address);
       } else if (info_.IsRunning()) {
         id_ = info_.AddNode(address);
@@ -174,14 +185,8 @@ void Info::WatchCancel(void* call) {
   etcd_.WatchCancel(call);
 }
 
-std::unordered_map<std::string, std::vector<int>> Info::Tasks() {
-  std::lock_guard<std::mutex> lock(mutex_);
-  std::unordered_map<std::string, std::vector<int>> tasks;
-  if (id_ < 0)
-    return tasks;
-  for (int shard : info_.future(id_))
-    tasks[info_.Address(map_[shard])].push_back(shard);
-  return tasks;
+std::unordered_map<int, std::vector<int>> Info::Tasks() const {
+  return info_.Tasks(id_);
 }
 
 void Info::GiveShard(int shard) {
@@ -205,6 +210,23 @@ void Info::MigrationOver(int shard) {
     Get();
     std::string old_info = info_.Serialize();
     info_.MigrationOver(shard);
+    succeeded =
+        etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
+  } while (!succeeded);
+}
+
+bool Info::IsAvailable(int id) const {
+  return info_.IsAvailable(id);
+}
+
+void Info::SetAvailable(int id, bool available) {
+  bool succeeded;
+  do {
+    Get();
+    if (info_.IsAvailable(id) == available)
+      return;
+    std::string old_info = info_.Serialize();
+    info_.SetAvailable(id, available);
     succeeded =
         etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
@@ -235,6 +257,8 @@ void Info::Print() {
     if (future.size() > 0)
       std::cout << "  future: " << ListToString(future) << " (" << future.size()
                 << ")" << std::endl;
+    if (!info_.IsAvailable(i))
+      std::cout << "  available: false" << std::endl;
     if (info_.IsRemoved(i))
       std::cout << "  remove: true" << std::endl;
   }
