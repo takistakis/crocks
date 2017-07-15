@@ -50,6 +50,7 @@ typedef Heap<NodeIterator, NodeIteratorGreater> MinHeap;
 typedef Heap<NodeIterator, NodeIteratorLess> MaxHeap;
 
 class Cluster;
+class ClusterImpl;
 
 class Iterator::IteratorImpl {
  public:
@@ -90,7 +91,7 @@ class Iterator::IteratorImpl {
  private:
   void ClearHeaps();
 
-  Cluster* db_;
+  ClusterImpl* db_;
   grpc::CompletionQueue cq_;
 
   // iters_ keeps at all times a NodeIterator* for each node in the cluster

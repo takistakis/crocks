@@ -20,6 +20,7 @@
 #include <utility>
 
 #include <crocks/cluster.h>
+#include "src/client/cluster_impl.h"
 
 namespace crocks {
 
@@ -70,7 +71,7 @@ Status Iterator::status() const {
 }
 
 // Iterator implementation
-Iterator::IteratorImpl::IteratorImpl(Cluster* db) : db_(db) {
+Iterator::IteratorImpl::IteratorImpl(Cluster* db) : db_(db->get()) {
   for (const auto& pair : db_->nodes())
     iters_.push_back(new NodeIterator(pair.second, &cq_));
 }

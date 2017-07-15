@@ -27,6 +27,7 @@
 #include <crocks/cluster.h>
 #include <crocks/status.h>
 #include <crocks/write_batch.h>
+#include "src/client/cluster_impl.h"
 #include "src/client/node.h"
 
 namespace crocks {
@@ -144,7 +145,7 @@ void Buffer::RequestRead() {
 
 // Write batch implementation
 WriteBatch::WriteBatchImpl::WriteBatchImpl(Cluster* db)
-    : db_(db),
+    : db_(db->get()),
       // Fill buffer_ vector with db_->num_shards() nullptrs
       buffers_(db_->num_shards()) {}
 

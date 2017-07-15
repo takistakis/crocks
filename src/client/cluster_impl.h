@@ -21,7 +21,6 @@
 #include <string>
 #include <unordered_map>
 
-#include <crocks/cluster.h>
 #include <crocks/status.h>
 #include "src/common/info.h"
 
@@ -29,7 +28,7 @@ namespace crocks {
 
 class Node;
 
-class Cluster::ClusterImpl {
+class ClusterImpl {
  public:
   ClusterImpl(const std::string& address);
   ~ClusterImpl();

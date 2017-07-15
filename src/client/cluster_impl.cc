@@ -23,6 +23,7 @@
 
 #include <grpc++/grpc++.h>
 
+#include <crocks/cluster.h>
 #include "src/client/node.h"
 
 namespace crocks {
@@ -54,56 +55,12 @@ Status Cluster::Merge(const std::string& key, const std::string& value) {
   return impl_->Merge(key, value);
 }
 
-int Cluster::IndexForShard(int shard) {
-  return impl_->IndexForShard(shard);
-}
-
-int Cluster::ShardForKey(const std::string& key) {
-  return impl_->ShardForKey(key);
-}
-
-int Cluster::IndexForKey(const std::string& key) {
-  return impl_->IndexForKey(key);
-}
-
-Node* Cluster::NodeForKey(const std::string& key) {
-  return impl_->NodeForKey(key);
-}
-
-Node* Cluster::NodeByIndex(int idx) {
-  return impl_->NodeByIndex(idx);
-}
-
-std::string Cluster::AddressForShard(int shard, bool update) {
-  return impl_->AddressForShard(shard, update);
-}
-
-int Cluster::num_nodes() const {
-  return impl_->num_nodes();
-}
-
-int Cluster::num_shards() const {
-  return impl_->num_shards();
-}
-
-std::unordered_map<int, Node*> Cluster::nodes() const {
-  return impl_->nodes();
-}
-
-void Cluster::Lock() {
-  return impl_->Lock();
-}
-
-void Cluster::Unlock() {
-  return impl_->Unlock();
-}
-
 Cluster* DBOpen(const std::string& address) {
   return new Cluster(address);
 }
 
 // Cluster implementation
-Cluster::ClusterImpl::ClusterImpl(const std::string& address) : info_(address) {
+ClusterImpl::ClusterImpl(const std::string& address) : info_(address) {
   info_.Get();
   info_.Run();
   int id = 0;
@@ -114,12 +71,12 @@ Cluster::ClusterImpl::ClusterImpl(const std::string& address) : info_(address) {
   }
 }
 
-Cluster::ClusterImpl::~ClusterImpl() {
+ClusterImpl::~ClusterImpl() {
   for (const auto& pair : nodes_)
     delete pair.second;
 }
 
-Status Cluster::ClusterImpl::Get(const std::string& key, std::string* value) {
+Status ClusterImpl::Get(const std::string& key, std::string* value) {
   Node* node = NodeForKey(key);
   Status status = node->Get(key, value);
   while (status.IsUnavailable()) {
@@ -140,8 +97,7 @@ Status Cluster::ClusterImpl::Get(const std::string& key, std::string* value) {
   return status;
 }
 
-Status Cluster::ClusterImpl::Put(const std::string& key,
-                                 const std::string& value) {
+Status ClusterImpl::Put(const std::string& key, const std::string& value) {
   Node* node = NodeForKey(key);
   Status status = node->Put(key, value);
   while (status.IsUnavailable()) {
@@ -162,7 +118,7 @@ Status Cluster::ClusterImpl::Put(const std::string& key,
   return status;
 }
 
-Status Cluster::ClusterImpl::Delete(const std::string& key) {
+Status ClusterImpl::Delete(const std::string& key) {
   Node* node = NodeForKey(key);
   Status status = node->Delete(key);
   while (status.IsUnavailable()) {
@@ -183,7 +139,7 @@ Status Cluster::ClusterImpl::Delete(const std::string& key) {
   return status;
 }
 
-Status Cluster::ClusterImpl::SingleDelete(const std::string& key) {
+Status ClusterImpl::SingleDelete(const std::string& key) {
   Node* node = NodeForKey(key);
   Status status = node->SingleDelete(key);
   while (status.IsUnavailable()) {
@@ -204,8 +160,7 @@ Status Cluster::ClusterImpl::SingleDelete(const std::string& key) {
   return status;
 }
 
-Status Cluster::ClusterImpl::Merge(const std::string& key,
-                                   const std::string& value) {
+Status ClusterImpl::Merge(const std::string& key, const std::string& value) {
   Node* node = NodeForKey(key);
   Status status = node->Merge(key, value);
   while (status.IsUnavailable()) {
@@ -226,35 +181,35 @@ Status Cluster::ClusterImpl::Merge(const std::string& key,
   return status;
 }
 
-int Cluster::ClusterImpl::IndexForShard(int shard) {
+int ClusterImpl::IndexForShard(int shard) {
   return info_.IndexForShard(shard);
 }
 
-int Cluster::ClusterImpl::ShardForKey(const std::string& key) {
+int ClusterImpl::ShardForKey(const std::string& key) {
   return info_.ShardForKey(key);
 }
 
-int Cluster::ClusterImpl::IndexForKey(const std::string& key) {
+int ClusterImpl::IndexForKey(const std::string& key) {
   return info_.IndexForKey(key);
 }
 
-Node* Cluster::ClusterImpl::NodeForKey(const std::string& key) {
+Node* ClusterImpl::NodeForKey(const std::string& key) {
   int idx = info_.IndexForKey(key);
   return nodes_[idx];
 }
 
-Node* Cluster::ClusterImpl::NodeByIndex(int idx) {
+Node* ClusterImpl::NodeByIndex(int idx) {
   return nodes_[idx];
 }
 
-std::string Cluster::ClusterImpl::AddressForShard(int shard, bool update) {
+std::string ClusterImpl::AddressForShard(int shard, bool update) {
   if (update)
     Update();
   int idx = info_.IndexForShard(shard);
   return nodes_[idx]->address();
 }
 
-void Cluster::ClusterImpl::Update() {
+void ClusterImpl::Update() {
   info_.Get();
   int id = 0;
   for (const auto& address : info_.Addresses()) {

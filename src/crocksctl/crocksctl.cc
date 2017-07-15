@@ -25,6 +25,7 @@
 #include <crocks/iterator.h>
 #include <crocks/status.h>
 #include <crocks/write_batch.h>
+#include "src/client/cluster_impl.h"
 #include "src/client/node.h"
 #include "src/common/info.h"
 
@@ -58,7 +59,7 @@ void EnsureArguments(bool expected) {
 }
 
 void Get(const std::string& address, const std::string& key) {
-  crocks::Cluster* db = new crocks::Cluster(address);
+  crocks::ClusterImpl* db = new crocks::ClusterImpl(address);
   std::cout << "shard:\t" << db->ShardForKey(key) << std::endl;
   std::cout << "node:\t" << db->IndexForKey(key) << std::endl;
   std::string value;
@@ -72,7 +73,7 @@ void Get(const std::string& address, const std::string& key) {
 
 void Put(const std::string& address, const std::string& key,
          const std::string& value) {
-  crocks::Cluster* db = new crocks::Cluster(address);
+  crocks::ClusterImpl* db = new crocks::ClusterImpl(address);
   std::cout << "shard:\t" << db->ShardForKey(key) << std::endl;
   std::cout << "node:\t" << db->IndexForKey(key) << std::endl;
   crocks::Status status = db->Put(key, value);
@@ -83,7 +84,7 @@ void Put(const std::string& address, const std::string& key,
 }
 
 void Delete(const std::string& address, const std::string& key) {
-  crocks::Cluster* db = new crocks::Cluster(address);
+  crocks::ClusterImpl* db = new crocks::ClusterImpl(address);
   std::cout << "shard:\t" << db->ShardForKey(key) << std::endl;
   std::cout << "node:\t" << db->IndexForKey(key) << std::endl;
   crocks::Status status = db->Delete(key);

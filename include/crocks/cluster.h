@@ -25,6 +25,7 @@
 
 namespace crocks {
 
+class ClusterImpl;
 class Node;
 
 class Cluster {
@@ -38,22 +39,12 @@ class Cluster {
   Status SingleDelete(const std::string& key);
   Status Merge(const std::string& key, const std::string& value);
 
-  int IndexForShard(int shard);
-  int ShardForKey(const std::string& key);
-  int IndexForKey(const std::string& key);
-  Node* NodeForKey(const std::string& key);
-  Node* NodeByIndex(int idx);
-  std::string AddressForShard(int shard, bool update = false);
-
-  int num_nodes() const;
-  int num_shards() const;
-  std::unordered_map<int, Node*> nodes() const;
-
-  void Lock();
-  void Unlock();
+  // Return a pointer to the underlying implementation. For internal use only.
+  ClusterImpl* get() const {
+    return impl_;
+  }
 
  private:
-  class ClusterImpl;
   ClusterImpl* const impl_;
   // No copying allowed
   Cluster(const Cluster&) = delete;
