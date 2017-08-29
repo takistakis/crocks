@@ -36,6 +36,7 @@ class DB;
 namespace crocks {
 
 class Shards;
+class ShardImporter;
 
 class AsyncServer final {
  public:
@@ -52,6 +53,7 @@ class AsyncServer final {
  private:
   void ServeThread(int i);
   void WatchThread();
+  void MigrationOver(ShardImporter& importer, int shard_id);
   void HandleError(const grpc::Status& status, int node_id);
 
   std::string dbpath_;

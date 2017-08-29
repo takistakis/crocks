@@ -796,13 +796,7 @@ void AsyncServer::WatchThread() {
             std::cerr << "Migration was already finished but didn't manage to "
                          "announce it before crashing"
                       << std::endl;
-            info_.MigrationOver(shard_id);
-            // FIXME: If we crash here the state never gets cleared
-            importer.ClearState();
-            do {
-              bool ret = info_.WatchNext(call_);
-              assert(!ret);
-            } while (info_.IsMigrating(shard_id));
+            MigrationOver(importer, shard_id);
           } else {
             HandleError(status, node_id);
           }
@@ -835,18 +829,22 @@ void AsyncServer::WatchThread() {
           continue;
         }
 
-        info_.MigrationOver(shard_id);
-        // FIXME: If we crash here the state never gets cleared
-        importer.ClearState();
-        // Wait for the confirmation from etcd
-        do {
-          bool ret = info_.WatchNext(call_);
-          assert(!ret);
-        } while (info_.IsMigrating(shard_id));
+        MigrationOver(importer, shard_id);
         std::cerr << info_.id() << ": Imported shard " << shard_id << std::endl;
       }
     }
   } while (!info_.WatchNext(call_));
+}
+
+void AsyncServer::MigrationOver(ShardImporter& importer, int shard_id) {
+  info_.MigrationOver(shard_id);
+  // FIXME: If we crash here the state never gets cleared
+  importer.ClearState();
+  // Wait for the confirmation from etcd
+  do {
+    bool ret = info_.WatchNext(call_);
+    assert(!ret);
+  } while (info_.IsMigrating(shard_id));
 }
 
 void AsyncServer::HandleError(const grpc::Status& status, int node_id) {
