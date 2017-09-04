@@ -18,9 +18,11 @@
 #ifndef CROCKS_CLIENT_CLUSTER_IMPL_H
 #define CROCKS_CLIENT_CLUSTER_IMPL_H
 
+#include <functional>
 #include <string>
 #include <unordered_map>
 
+#include <crocks/options.h>
 #include <crocks/status.h>
 #include "src/common/info.h"
 
@@ -30,7 +32,7 @@ class Node;
 
 class ClusterImpl {
  public:
-  ClusterImpl(const std::string& address);
+  ClusterImpl(const Options&, const std::string& address);
   ~ClusterImpl();
 
   Status Get(const std::string& key, std::string* value);
@@ -38,6 +40,8 @@ class ClusterImpl {
   Status Delete(const std::string& key);
   Status SingleDelete(const std::string& key);
   Status Merge(const std::string& key, const std::string& value);
+
+  void WaitUntilHealthy();
 
   int IndexForShard(int shard);
   int ShardForKey(const std::string& key);
@@ -67,8 +71,10 @@ class ClusterImpl {
   }
 
  private:
+  Status Operation(const std::function<Status(Node*)>&, const std::string& key);
   void Update();
 
+  const Options options_;
   Info info_;
   std::unordered_map<int, Node*> nodes_;
 };

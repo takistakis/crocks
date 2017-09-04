@@ -128,7 +128,14 @@ void EtcdClient::WatchCancel(void* _call) {
   WatchCancelRequest(call->id, &call->request);
   call->stream->Write(call->request);
   call->stream->WritesDone();
-  EnsureRpc(call->stream->Finish());
+}
+
+void EtcdClient::WatchEnd(void* _call) {
+  WatchCall* call = static_cast<WatchCall*>(_call);
+  call->context.TryCancel();
+  grpc::Status status = call->stream->Finish();
+  assert(status.error_code() == grpc::StatusCode::CANCELLED);
+  assert(!call->stream->Read(&call->response));
   delete call;
 }
 

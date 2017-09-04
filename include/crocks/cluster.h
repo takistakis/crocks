@@ -25,11 +25,13 @@
 
 namespace crocks {
 
+struct Options;
 class ClusterImpl;
 class Node;
 
 class Cluster {
  public:
+  explicit Cluster(const Options& options, const std::string& address);
   explicit Cluster(const std::string& address);
   ~Cluster();
 
@@ -38,6 +40,8 @@ class Cluster {
   Status Delete(const std::string& key);
   Status SingleDelete(const std::string& key);
   Status Merge(const std::string& key, const std::string& value);
+
+  void WaitUntilHealthy();
 
   // Return a pointer to the underlying implementation. For internal use only.
   ClusterImpl* get() const {

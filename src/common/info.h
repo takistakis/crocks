@@ -120,6 +120,7 @@ class Info {
   void* Watch();
   bool WatchNext(void* call);
   void WatchCancel(void* call);
+  void WatchEnd(void* call);
 
   std::unordered_map<int, std::vector<int>> Tasks() const;
 
@@ -140,6 +141,8 @@ class Info {
   void Unlock() {
     etcd_.Unlock();
   }
+
+  void WaitUntilHealthy();
 
  private:
   void Parse(const std::string& str) {

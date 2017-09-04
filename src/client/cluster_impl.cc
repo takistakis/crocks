@@ -19,6 +19,7 @@
 
 #include <assert.h>
 
+#include <iostream>
 #include <utility>
 
 #include <grpc++/grpc++.h>
@@ -28,8 +29,11 @@
 
 namespace crocks {
 
+Cluster::Cluster(const Options& options, const std::string& address)
+    : impl_(new ClusterImpl(options, address)) {}
+
 Cluster::Cluster(const std::string& address)
-    : impl_(new ClusterImpl(address)) {}
+    : impl_(new ClusterImpl(Options(), address)) {}
 
 Cluster::~Cluster() {
   delete impl_;
@@ -55,12 +59,17 @@ Status Cluster::Merge(const std::string& key, const std::string& value) {
   return impl_->Merge(key, value);
 }
 
+void Cluster::WaitUntilHealthy() {
+  impl_->WaitUntilHealthy();
+}
+
 Cluster* DBOpen(const std::string& address) {
   return new Cluster(address);
 }
 
 // Cluster implementation
-ClusterImpl::ClusterImpl(const std::string& address) : info_(address) {
+ClusterImpl::ClusterImpl(const Options& options, const std::string& address)
+    : options_(options), info_(address) {
   info_.Get();
   info_.Run();
   int id = 0;
@@ -77,108 +86,32 @@ ClusterImpl::~ClusterImpl() {
 }
 
 Status ClusterImpl::Get(const std::string& key, std::string* value) {
-  Node* node = NodeForKey(key);
-  Status status = node->Get(key, value);
-  while (status.IsUnavailable()) {
-    Update();
-    Node* new_node = NodeForKey(key);
-    if (new_node != node) {
-      status = new_node->Get(key, value);
-      node = new_node;
-    } else {
-      info_.SetAvailable(IndexForKey(key), false);
-      break;
-    }
-  }
-  while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
-    Update();
-    status = NodeForKey(key)->Get(key, value);
-  }
-  return status;
+  auto op = std::bind(&Node::Get, std::placeholders::_1, key, value);
+  return Operation(op, key);
 }
 
 Status ClusterImpl::Put(const std::string& key, const std::string& value) {
-  Node* node = NodeForKey(key);
-  Status status = node->Put(key, value);
-  while (status.IsUnavailable()) {
-    Update();
-    Node* new_node = NodeForKey(key);
-    if (new_node != node) {
-      status = new_node->Put(key, value);
-      node = new_node;
-    } else {
-      info_.SetAvailable(IndexForKey(key), false);
-      break;
-    }
-  }
-  while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
-    Update();
-    status = NodeForKey(key)->Put(key, value);
-  }
-  return status;
+  auto op = std::bind(&Node::Put, std::placeholders::_1, key, value);
+  return Operation(op, key);
 }
 
 Status ClusterImpl::Delete(const std::string& key) {
-  Node* node = NodeForKey(key);
-  Status status = node->Delete(key);
-  while (status.IsUnavailable()) {
-    Update();
-    Node* new_node = NodeForKey(key);
-    if (new_node != node) {
-      status = new_node->Delete(key);
-      node = new_node;
-    } else {
-      info_.SetAvailable(IndexForKey(key), false);
-      break;
-    }
-  }
-  while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
-    Update();
-    status = NodeForKey(key)->Delete(key);
-  }
-  return status;
+  auto op = std::bind(&Node::Delete, std::placeholders::_1, key);
+  return Operation(op, key);
 }
 
 Status ClusterImpl::SingleDelete(const std::string& key) {
-  Node* node = NodeForKey(key);
-  Status status = node->SingleDelete(key);
-  while (status.IsUnavailable()) {
-    Update();
-    Node* new_node = NodeForKey(key);
-    if (new_node != node) {
-      status = new_node->SingleDelete(key);
-      node = new_node;
-    } else {
-      info_.SetAvailable(IndexForKey(key), false);
-      break;
-    }
-  }
-  while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
-    Update();
-    status = NodeForKey(key)->SingleDelete(key);
-  }
-  return status;
+  auto op = std::bind(&Node::SingleDelete, std::placeholders::_1, key);
+  return Operation(op, key);
 }
 
 Status ClusterImpl::Merge(const std::string& key, const std::string& value) {
-  Node* node = NodeForKey(key);
-  Status status = node->Merge(key, value);
-  while (status.IsUnavailable()) {
-    Update();
-    Node* new_node = NodeForKey(key);
-    if (new_node != node) {
-      status = new_node->Merge(key, value);
-      node = new_node;
-    } else {
-      info_.SetAvailable(IndexForKey(key), false);
-      break;
-    }
-  }
-  while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
-    Update();
-    status = NodeForKey(key)->Merge(key, value);
-  }
-  return status;
+  auto op = std::bind(&Node::Merge, std::placeholders::_1, key, value);
+  return Operation(op, key);
+}
+
+void ClusterImpl::WaitUntilHealthy() {
+  info_.WaitUntilHealthy();
 }
 
 int ClusterImpl::IndexForShard(int shard) {
@@ -207,6 +140,37 @@ std::string ClusterImpl::AddressForShard(int shard, bool update) {
     Update();
   int idx = info_.IndexForShard(shard);
   return nodes_[idx]->address();
+}
+
+Status ClusterImpl::Operation(const std::function<Status(Node*)>& op,
+                              const std::string& key) {
+  Node* node = NodeForKey(key);
+  Status status = op(node);
+  while (status.IsUnavailable()) {
+    Update();
+    Node* new_node = NodeForKey(key);
+    if (new_node == node) {
+      // FIXME: We have assumed that in ordered to reach here, the
+      // node is down. However it is possible that he went down and
+      // back up again and we just need to renew the connection.
+      int id = IndexForKey(key);
+      info_.SetAvailable(id, false);
+      delete nodes_[id];
+      nodes_[id] = nullptr;
+      if (!options_.wait_on_unhealthy)
+        return status;
+      std::cerr << "Node " << id << " is unavailable. Waiting..." << std::endl;
+      info_.WaitUntilHealthy();
+      std::cerr << "OK" << std::endl;
+      Update();
+    }
+    status = op(NodeForKey(key));
+  }
+  while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
+    Update();
+    status = op(NodeForKey(key));
+  }
+  return status;
 }
 
 void ClusterImpl::Update() {

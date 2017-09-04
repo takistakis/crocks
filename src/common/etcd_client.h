@@ -72,6 +72,10 @@ class EtcdClient {
   // in a different thread, otherwise WatchCancel blocks forever.
   void WatchCancel(void* call);
 
+  // Send a request to cancel the watch call,
+  // wait for the response and finish the RPC.
+  void WatchEnd(void* call);
+
   void Lock();
   void Unlock();
 

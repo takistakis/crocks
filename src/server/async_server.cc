@@ -624,6 +624,7 @@ AsyncServer::~AsyncServer() {
     static_cast<Call*>(tag)->Delete();
   info_.WatchCancel(call_);
   watcher_.join();
+  info_.WatchEnd(call_);
   delete shards_;
   delete db_;
 }

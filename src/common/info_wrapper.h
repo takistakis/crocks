@@ -153,6 +153,14 @@ class InfoWrapper {
     return info_.nodes(id).available();
   }
 
+  bool IsHealthy() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    for (const auto& node : info_.nodes())
+      if (!node.available())
+        return false;
+    return true;
+  }
+
   void SetRunning() {
     std::lock_guard<std::mutex> lock(mutex_);
     info_.set_state(pb::ClusterInfo::RUNNING);

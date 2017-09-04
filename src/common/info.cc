@@ -185,6 +185,10 @@ void Info::WatchCancel(void* call) {
   etcd_.WatchCancel(call);
 }
 
+void Info::WatchEnd(void* call) {
+  etcd_.WatchEnd(call);
+}
+
 std::unordered_map<int, std::vector<int>> Info::Tasks() const {
   return info_.Tasks(id_);
 }
@@ -262,6 +266,13 @@ void Info::Print() {
     if (info_.IsRemoved(i))
       std::cout << "  remove: true" << std::endl;
   }
+}
+
+void Info::WaitUntilHealthy() {
+  void* call = Watch();
+  while (!info_.IsHealthy())
+    WatchNext(call);
+  WatchCancel(call);
 }
 
 }  // namespace crocks
