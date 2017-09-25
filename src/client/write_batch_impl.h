@@ -45,6 +45,7 @@ struct AsyncBatchCall {
   int pending_requests = 0;
   std::unique_ptr<grpc::ClientAsyncReaderWriter<pb::BatchBuffer, pb::Response>>
       stream = nullptr;
+  bool shutdown = false;
 };
 
 class Buffer {
@@ -142,7 +143,7 @@ class WriteBatch::WriteBatchImpl {
  private:
   AsyncBatchCall* EnsureBatchCall(const std::string& address);
   Buffer* EnsureBuffer(int shard);
-  void QueueNext(bool call = false);
+  void QueueNext(bool iscall = false);
   bool QueueAsyncNext();
   void StreamIfExceededThreshold(int shard);
   void Stream(Buffer* buffer);

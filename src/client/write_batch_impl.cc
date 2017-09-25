@@ -233,16 +233,22 @@ Buffer* WriteBatch::WriteBatchImpl::EnsureBuffer(int shard) {
 
 // Get a tag from the completion queue and decrement the number of
 // pending_requests of the related call.
-void WriteBatch::WriteBatchImpl::QueueNext(bool call) {
+void WriteBatch::WriteBatchImpl::QueueNext(bool iscall) {
   void* got_tag;
   bool ok = false;
   bool got_event = cq_.Next(&got_tag, &ok);
   assert(got_event);
-  assert(ok);
-  if (call)
-    static_cast<AsyncBatchCall*>(got_tag)->pending_requests--;
+  AsyncBatchCall* call;
+  if (iscall)
+    call = static_cast<AsyncBatchCall*>(got_tag);
   else
-    static_cast<Buffer*>(got_tag)->call()->pending_requests--;
+    call = static_cast<Buffer*>(got_tag)->call();
+  if (ok) {
+    call->pending_requests--;
+  } else {
+    call->shutdown = true;
+    call->pending_requests = 0;
+  }
 }
 
 // Similar to QueueNext() but does not block and returns true if it processed a
@@ -250,13 +256,19 @@ void WriteBatch::WriteBatchImpl::QueueNext(bool call) {
 bool WriteBatch::WriteBatchImpl::QueueAsyncNext() {
   void* got_tag;
   bool ok = false;
+  AsyncBatchCall* call;
   // The deadline is normally something like
   // std::chrono::system_clock::now() + std::chrono::milliseconds(10)
   // Here we only pass now() so it will timeout immediately.
   switch (cq_.AsyncNext(&got_tag, &ok, std::chrono::system_clock::now())) {
     case grpc::CompletionQueue::GOT_EVENT:
-      assert(ok);
-      static_cast<Buffer*>(got_tag)->call()->pending_requests--;
+      call = static_cast<Buffer*>(got_tag)->call();
+      if (ok) {
+        call->pending_requests--;
+      } else {
+        call->shutdown = true;
+        call->pending_requests = 0;
+      }
       return true;
     case grpc::CompletionQueue::TIMEOUT:
       return false;
@@ -321,7 +333,7 @@ void WriteBatch::WriteBatchImpl::Stream(Buffer* buffer) {
       QueueNext();
     if (buffer->first()) {
       if (buffer->read_requested()) {
-        if (buffer->ok()) {
+        if (buffer->ok() && !call->shutdown) {
           // OK, set not first and stream normally
           buffer->set_first(false);
           buffer->Stream();
