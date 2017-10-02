@@ -29,6 +29,7 @@
 
 #include <rocksdb/db.h>
 #include <rocksdb/status.h>
+#include <rocksdb/utilities/options_util.h>
 #include <rocksdb/write_batch.h>
 
 #include <crocks/status.h>
@@ -604,11 +605,18 @@ class MigrateCall final : public Call {
 };
 
 AsyncServer::AsyncServer(const std::string& etcd_address,
-                         const std::string& dbpath, int num_threads)
-    : dbpath_(dbpath),
-      options_(DefaultRocksdbOptions()),
-      info_(etcd_address),
-      num_threads_(num_threads) {}
+                         const std::string& dbpath,
+                         const std::string& options_path, int num_threads)
+    : dbpath_(dbpath), info_(etcd_address), num_threads_(num_threads) {
+  if (options_path == "") {
+    options_ = DefaultRocksdbOptions();
+  } else {
+    std::vector<rocksdb::ColumnFamilyDescriptor> cf_descriptors;
+    rocksdb::Status s = rocksdb::LoadOptionsFromFile(
+        options_path, rocksdb::Env::Default(), &options_, &cf_descriptors);
+    EnsureRocksdb("LoadOptionsFromFile", s);
+  }
+}
 
 AsyncServer::~AsyncServer() {
   std::cerr << "Shutting down..." << std::endl;

@@ -33,6 +33,7 @@ const std::string usage_message(
     "\n"
     "Options:\n"
     "  -p, --path <path>      RocksDB database path.\n"
+    "  -o, --options <path>   RocksDB options file path.\n"
     "  -H, --host <hostname>  Node hostname [default: localhost].\n"
     "  -P, --port <port>      Listening port [default: chosen by OS].\n"
     "  -e, --etcd <address>   Etcd address [default: localhost:2379].\n"
@@ -43,15 +44,17 @@ const std::string usage_message(
 
 int main(int argc, char** argv) {
   char* dbpath = nullptr;
+  std::string options_path;
   std::string hostname = "localhost";
   std::string port = "0";
   std::string etcd_address = "localhost:2379";
   int num_threads = 2;
 
-  const char* optstring = "p:H:P:e:t:dvh";
+  const char* optstring = "p:o:H:P:e:t:dvh";
   static struct option longopts[] = {
       // clang-format off
       {"path",    required_argument, 0, 'p'},
+      {"options", required_argument, 0, 'o'},
       {"host",    required_argument, 0, 'H'},
       {"port",    required_argument, 0, 'P'},
       {"etcd",    required_argument, 0, 'e'},
@@ -69,6 +72,9 @@ int main(int argc, char** argv) {
     switch (c) {
       case 'p':
         dbpath = optarg;
+        break;
+      case 'o':
+        options_path = optarg;
         break;
       case 'H':
         hostname = optarg;
@@ -112,7 +118,7 @@ int main(int argc, char** argv) {
   std::string listening_address = "0.0.0.0:" + port;
 
   // Start server
-  crocks::AsyncServer server(etcd_address, dbpath, num_threads);
+  crocks::AsyncServer server(etcd_address, dbpath, options_path, num_threads);
   server.Init(listening_address, hostname);
   server.Run();
 

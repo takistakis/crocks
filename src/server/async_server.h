@@ -41,7 +41,7 @@ class ShardImporter;
 class AsyncServer final {
  public:
   AsyncServer(const std::string& etcd_address, const std::string& dbpath,
-              int num_threads);
+              const std::string& options_path, int num_threads);
   ~AsyncServer();
 
   // Start listening for incoming client connections, announce server to
