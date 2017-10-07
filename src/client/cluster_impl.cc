@@ -114,7 +114,9 @@ void ClusterImpl::WaitUntilHealthy() {
   info_.WaitUntilHealthy();
 }
 
-int ClusterImpl::IndexForShard(int shard) {
+int ClusterImpl::IndexForShard(int shard, bool update) {
+  if (update)
+    Update();
   return info_.IndexForShard(shard);
 }
 
@@ -133,13 +135,6 @@ Node* ClusterImpl::NodeForKey(const std::string& key) {
 
 Node* ClusterImpl::NodeByIndex(int idx) {
   return nodes_[idx];
-}
-
-std::string ClusterImpl::AddressForShard(int shard, bool update) {
-  if (update)
-    Update();
-  int idx = info_.IndexForShard(shard);
-  return nodes_[idx]->address();
 }
 
 Status ClusterImpl::Operation(const std::function<Status(Node*)>& op,

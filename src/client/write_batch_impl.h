@@ -141,9 +141,9 @@ class WriteBatch::WriteBatchImpl {
   Status WriteWithLock();
 
  private:
-  AsyncBatchCall* EnsureBatchCall(const std::string& address);
+  AsyncBatchCall* EnsureBatchCall(int id);
   Buffer* EnsureBuffer(int shard);
-  void QueueNext(bool iscall = false);
+  void QueueNext();
   bool QueueAsyncNext();
   void StreamIfExceededThreshold(int shard);
   void Stream(Buffer* buffer);
@@ -152,7 +152,7 @@ class WriteBatch::WriteBatchImpl {
 
   ClusterImpl* db_;
   grpc::CompletionQueue cq_;
-  std::unordered_map<std::string, AsyncBatchCall*> calls_;
+  std::unordered_map<int, AsyncBatchCall*> calls_;
   std::vector<Buffer*> buffers_;
 };
 

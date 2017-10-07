@@ -43,12 +43,11 @@ class ClusterImpl {
 
   void WaitUntilHealthy();
 
-  int IndexForShard(int shard);
+  int IndexForShard(int shard, bool update = false);
   int ShardForKey(const std::string& key);
   int IndexForKey(const std::string& key);
   Node* NodeForKey(const std::string& key);
   Node* NodeByIndex(int idx);
-  std::string AddressForShard(int shard, bool update = false);
 
   int num_nodes() const {
     return info_.num_nodes();

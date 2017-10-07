@@ -120,7 +120,7 @@ void Buffer::Clear() {
 }
 
 void Buffer::Stream() {
-  call_->stream->Write(buffer_, this);
+  call_->stream->Write(buffer_, call_);
   call_->pending_requests++;
 }
 
@@ -128,13 +128,13 @@ void Buffer::RestreamFirstBuffer() {
   assert(first_);
   assert(read_requested_);
   assert(first_buffer_.updates_size() > 0);
-  call_->stream->Write(first_buffer_, this);
+  call_->stream->Write(first_buffer_, call_);
   call_->pending_requests++;
 }
 
 void Buffer::RequestRead() {
   assert(first_);
-  call_->stream->Read(&response_, this);
+  call_->stream->Read(&response_, call_);
   // The first time this is called we have to copy the buffer
   if (!read_requested_) {
     read_requested_ = true;
@@ -211,12 +211,14 @@ Status WriteBatch::WriteBatchImpl::WriteWithLock() {
 }
 
 // private
-AsyncBatchCall* WriteBatch::WriteBatchImpl::EnsureBatchCall(
-    const std::string& address) {
-  AsyncBatchCall* call = calls_[address];
+AsyncBatchCall* WriteBatch::WriteBatchImpl::EnsureBatchCall(int id) {
+  AsyncBatchCall* call = calls_[id];
   if (call == nullptr) {
     call = new AsyncBatchCall;
-    calls_[address] = call;
+    Node* node = db_->NodeByIndex(id);
+    call->stream = node->AsyncBatchStream(&call->context, &cq_, call);
+    call->pending_requests = 1;
+    calls_[id] = call;
   }
   return call;
 }
@@ -233,16 +235,13 @@ Buffer* WriteBatch::WriteBatchImpl::EnsureBuffer(int shard) {
 
 // Get a tag from the completion queue and decrement the number of
 // pending_requests of the related call.
-void WriteBatch::WriteBatchImpl::QueueNext(bool iscall) {
+void WriteBatch::WriteBatchImpl::QueueNext() {
   void* got_tag;
   bool ok = false;
   bool got_event = cq_.Next(&got_tag, &ok);
   assert(got_event);
   AsyncBatchCall* call;
-  if (iscall)
-    call = static_cast<AsyncBatchCall*>(got_tag);
-  else
-    call = static_cast<Buffer*>(got_tag)->call();
+  call = static_cast<AsyncBatchCall*>(got_tag);
   if (ok) {
     call->pending_requests--;
   } else {
@@ -262,7 +261,7 @@ bool WriteBatch::WriteBatchImpl::QueueAsyncNext() {
   // Here we only pass now() so it will timeout immediately.
   switch (cq_.AsyncNext(&got_tag, &ok, std::chrono::system_clock::now())) {
     case grpc::CompletionQueue::GOT_EVENT:
-      call = static_cast<Buffer*>(got_tag)->call();
+      call = static_cast<AsyncBatchCall*>(got_tag);
       if (ok) {
         call->pending_requests--;
       } else {
@@ -284,8 +283,8 @@ void WriteBatch::WriteBatchImpl::StreamIfExceededThreshold(int shard) {
   Buffer* buffer = buffers_[shard];
   AsyncBatchCall* call = buffer->call();
   if (call == nullptr) {
-    std::string address = db_->AddressForShard(shard);
-    call = EnsureBatchCall(address);
+    int node_id = db_->IndexForShard(shard);
+    call = EnsureBatchCall(node_id);
     buffer->set_call(call);
   }
   if (buffer->ByteSize() <= kByteSizeThreshold1) {
@@ -300,8 +299,6 @@ void WriteBatch::WriteBatchImpl::StreamIfExceededThreshold(int shard) {
       Stream(buffer);
   } else {
     // Above the high threshold. We have no choice but to block.
-    while (call->pending_requests > 0)
-      QueueNext();
     Stream(buffer);
   }
 }
@@ -310,61 +307,41 @@ void WriteBatch::WriteBatchImpl::Stream(Buffer* buffer) {
   assert(buffer->updates_size() > 0);
   assert(buffer->RealByteSize() <= buffer->ByteSize());
   AsyncBatchCall* call = buffer->call();
-  // assert(call->pending_requests == 0);
-  if (call->stream == nullptr) {
-    // FIXME: OK, it could be better like NodeForShard or something
-    Node* node = db_->NodeForKey(buffer->get().updates(0).key());
-    call->stream = node->AsyncBatchStream(&call->context, &cq_, buffer);
-    assert(call->pending_requests == 0);
-    call->pending_requests = 1;
-    buffer->Stream();
-    assert(buffer->first());
-    assert(!buffer->read_requested());
-    buffer->RequestRead();
-    buffer->Clear();
-  } else {
-    // From http://www.grpc.io/grpc/cpp/classgrpc_1_1_client_async_writer.html:
-    // "Only one write may be outstanding at any given time. This means that
-    // after calling Write, one must wait to receive tag from the completion
-    // queue BEFORE calling Write again." So before we call Write(), we have to
-    // repeatedly read from the completion queue, until there are no more
-    // pending requests for the given call.
-    while (call->pending_requests > 0)
-      QueueNext();
-    if (buffer->first()) {
-      if (buffer->read_requested()) {
-        if (buffer->ok() && !call->shutdown) {
-          // OK, set not first and stream normally
-          buffer->set_first(false);
-          buffer->Stream();
-          buffer->Clear();
-        } else {
-          // Not OK, update and stream the first buffer again
-          std::string address = db_->AddressForShard(buffer->shard(), true);
-          AsyncBatchCall* call = EnsureBatchCall(address);
-          buffer->set_call(call);
-          if (call->stream == nullptr) {
-            Node* node = db_->NodeForKey(buffer->get().updates(0).key());
-            call->stream = node->AsyncBatchStream(&call->context, &cq_, buffer);
-            assert(call->pending_requests == 0);
-            call->pending_requests = 1;
-          }
-          while (call->pending_requests > 0)
-            QueueNext();
-          buffer->RestreamFirstBuffer();
-          buffer->RequestRead();
-        }
-      } else {
-        // Stream the first buffer and request a response
+  // From http://www.grpc.io/grpc/cpp/classgrpc_1_1_client_async_writer.html:
+  // "Only one write may be outstanding at any given time. This means that
+  // after calling Write, one must wait to receive tag from the completion
+  // queue BEFORE calling Write again." So before we call Write(), we have to
+  // repeatedly read from the completion queue, until there are no more
+  // pending requests for the given call.
+  while (call->pending_requests > 0)
+    QueueNext();
+  if (buffer->first()) {
+    if (buffer->read_requested()) {
+      if (buffer->ok() && !call->shutdown) {
+        // OK, set not first and stream normally
+        buffer->set_first(false);
         buffer->Stream();
-        buffer->RequestRead();
         buffer->Clear();
+      } else {
+        // Not OK, update and stream the first buffer again
+        int node_id = db_->IndexForShard(buffer->shard(), true);
+        AsyncBatchCall* call = EnsureBatchCall(node_id);
+        buffer->set_call(call);
+        while (call->pending_requests > 0)
+          QueueNext();
+        buffer->RestreamFirstBuffer();
+        buffer->RequestRead();
       }
     } else {
-      // Stream normally
+      // Stream the first buffer and request a response
       buffer->Stream();
+      buffer->RequestRead();
       buffer->Clear();
     }
+  } else {
+    // Stream normally
+    buffer->Stream();
+    buffer->Clear();
   }
 }
 
@@ -376,20 +353,14 @@ void WriteBatch::WriteBatchImpl::DoWrite() {
     assert(buffer->call() != nullptr);
     if (buffer->updates_size() > 0)
       Stream(buffer);
+    // assert(!buffer->first());
   }
 
-  // Make sure every server has responded
   for (auto pair : calls_) {
     AsyncBatchCall* call = pair.second;
     assert(call != nullptr);
     while (call->pending_requests > 0)
       QueueNext();
-  }
-
-  for (auto pair : calls_) {
-    AsyncBatchCall* call = pair.second;
-    assert(call != nullptr);
-    // Once per call so we associate it with the call instead of the buffer
     call->stream->WritesDone(call);
     call->stream->Read(&call->response, call);
     call->stream->Finish(&call->status, call);
@@ -401,8 +372,7 @@ void WriteBatch::WriteBatchImpl::DoWrite() {
     AsyncBatchCall* call = pair.second;
     assert(call != nullptr);
     while (call->pending_requests > 0)
-      // This QueueNext gets tags associated with a call
-      QueueNext(true);
+      QueueNext();
   }
 }
 
