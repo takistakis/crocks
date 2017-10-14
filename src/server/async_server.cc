@@ -65,6 +65,69 @@ class Call {
   virtual void Delete() = 0;
 };
 
+class PingCall final : public Call {
+ public:
+  explicit PingCall(CallData* data)
+      : data_(data), responder_(&ctx_), status_(REQUEST) {
+    on_done = [&](bool ok) { OnDone(ok); };
+    proceed = [&](bool ok) { Proceed(ok); };
+    ctx_.AsyncNotifyWhenDone(&on_done);
+    data_->service->RequestPing(&ctx_, &request_, &responder_, data_->cq,
+                                data_->cq, &proceed);
+  }
+
+  void Proceed(bool ok) {
+    switch (status_) {
+      case REQUEST:
+        new PingCall(data_);
+        if (!ok) {
+          std::cerr << "Ping in REQUEST was not ok. Finishing." << std::endl;
+          responder_.FinishWithError(grpc::Status::CANCELLED, &proceed);
+          status_ = FINISH;
+          break;
+        }
+        responder_.Finish(response_, grpc::Status::OK, &proceed);
+        status_ = FINISH;
+        break;
+
+      case FINISH:
+        finish_called_ = true;
+        if (on_done_called_)
+          delete this;
+        break;
+    }
+  }
+
+  void OnDone(bool ok) {
+    assert(ok);
+    if (ctx_.IsCancelled())
+      std::cerr << data_->info->id() << ": Ping call cancelled" << std::endl;
+    on_done_called_ = true;
+    if (finish_called_)
+      delete this;
+    else
+      status_ = FINISH;
+  }
+
+  void Delete() {
+    delete this;
+  }
+
+  std::function<void(bool)> proceed;
+  std::function<void(bool)> on_done;
+
+ private:
+  CallData* data_;
+  grpc::ServerContext ctx_;
+  grpc::ServerAsyncResponseWriter<pb::Empty> responder_;
+  pb::Empty request_;
+  pb::Empty response_;
+  enum CallStatus { REQUEST, FINISH };
+  CallStatus status_;
+  bool finish_called_ = false;
+  bool on_done_called_ = false;
+};
+
 class GetCall final : public Call {
  public:
   explicit GetCall(CallData* data)
@@ -797,6 +860,7 @@ void AsyncServer::Run() {
   std::vector<std::thread> threads;
   for (int i = 0; i < num_threads_; i++) {
     CallData data{&service_, cqs_[i].get(), db_, &info_, shards_};
+    new PingCall(&data);
     new GetCall(&data);
     new PutCall(&data);
     new DeleteCall(&data);

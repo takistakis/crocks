@@ -42,6 +42,7 @@ class Node {
     return address_;
   }
 
+  Status Ping();
   Status Get(const std::string& key, std::string* value);
   Status Put(const std::string& key, const std::string& value);
   Status Delete(const std::string& key);

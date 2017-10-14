@@ -117,8 +117,7 @@ void Health(const std::string& address) {
       continue;
     }
     crocks::Node* node = new crocks::Node(address);
-    std::string value;
-    crocks::Status status = node->Get("test", &value);
+    crocks::Status status = node->Ping();
     delete node;
     if (status.IsUnavailable()) {
       info.SetAvailable(i, false);

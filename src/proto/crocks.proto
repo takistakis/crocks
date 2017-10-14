@@ -3,6 +3,8 @@ syntax = "proto3";
 package crocks.pb;
 
 service RPC {
+  rpc Ping(Empty) returns (Empty) {}
+
   // Basic Operations
   rpc Get(Key) returns (Response) {}
   rpc Put(KeyValue) returns (Response) {}
@@ -26,6 +28,8 @@ service RPC {
   // a message is marked as eof, he closes the file and ingests it.
   rpc Migrate(stream MigrateRequest) returns (stream MigrateResponse) {}
 }
+
+message Empty {}
 
 message Key {
   bytes key = 1;

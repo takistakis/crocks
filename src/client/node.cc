@@ -26,6 +26,14 @@ Node::Node(const std::string& address)
           grpc::CreateChannel(address, grpc::InsecureChannelCredentials()))),
       address_(address) {}
 
+Status Node::Ping() {
+  pb::Empty request;
+  pb::Empty response;
+  grpc::ClientContext context;
+  grpc::Status status = stub_->Ping(&context, request, &response);
+  return Status(status);
+}
+
 Status Node::Get(const std::string& key, std::string* value) {
   grpc::ClientContext context;
   pb::Key request;
