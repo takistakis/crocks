@@ -19,6 +19,8 @@
 
 #include <grpc++/grpc++.h>
 
+#include "src/common/util.h"
+
 namespace crocks {
 
 Node::Node(const std::string& address)
@@ -35,56 +37,56 @@ Status Node::Ping() {
 }
 
 Status Node::Get(const std::string& key, std::string* value) {
-  grpc::ClientContext context;
   pb::Key request;
   pb::Response response;
-
   request.set_key(key);
-  grpc::Status status = stub_->Get(&context, request, &response);
+  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
+    return stub_->Get(ctx, request, &response);
+  });
   // If status is not OK, value is an empty string
   *value = response.value();
   return Status(status, response.status());
 }
 
 Status Node::Put(const std::string& key, const std::string& value) {
-  grpc::ClientContext context;
   pb::KeyValue request;
   pb::Response response;
-
   request.set_key(key);
   request.set_value(value);
-  grpc::Status status = stub_->Put(&context, request, &response);
+  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
+    return stub_->Put(ctx, request, &response);
+  });
   return Status(status, response.status());
 }
 
 Status Node::Delete(const std::string& key) {
-  grpc::ClientContext context;
   pb::Key request;
   pb::Response response;
-
   request.set_key(key);
-  grpc::Status status = stub_->Delete(&context, request, &response);
+  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
+    return stub_->Delete(ctx, request, &response);
+  });
   return Status(status, response.status());
 }
 
 Status Node::SingleDelete(const std::string& key) {
-  grpc::ClientContext context;
   pb::Key request;
   pb::Response response;
-
   request.set_key(key);
-  grpc::Status status = stub_->SingleDelete(&context, request, &response);
+  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
+    return stub_->SingleDelete(ctx, request, &response);
+  });
   return Status(status, response.status());
 }
 
 Status Node::Merge(const std::string& key, const std::string& value) {
-  grpc::ClientContext context;
   pb::KeyValue request;
   pb::Response response;
-
   request.set_key(key);
   request.set_value(value);
-  grpc::Status status = stub_->Merge(&context, request, &response);
+  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
+    return stub_->Merge(ctx, request, &response);
+  });
   return Status(status, response.status());
 }
 

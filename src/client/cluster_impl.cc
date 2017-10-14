@@ -145,9 +145,6 @@ Status ClusterImpl::Operation(const std::function<Status(Node*)>& op,
     Update();
     Node* new_node = NodeForKey(key);
     if (new_node == node) {
-      // FIXME: We have assumed that in ordered to reach here, the
-      // node is down. However it is possible that he went down and
-      // back up again and we just need to renew the connection.
       int id = IndexForKey(key);
       info_.SetAvailable(id, false);
       delete nodes_[id];

@@ -35,7 +35,7 @@ struct WatchCall {
   int id;
   etcdserverpb::WatchRequest request;
   etcdserverpb::WatchResponse response;
-  grpc::ClientContext context;
+  std::unique_ptr<grpc::ClientContext> context;
   std::unique_ptr<grpc::ClientReaderWriter<etcdserverpb::WatchRequest,
                                            etcdserverpb::WatchResponse>>
       stream;
