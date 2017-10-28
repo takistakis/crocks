@@ -21,6 +21,10 @@
 namespace crocks {
 
 struct Options {
+  // If true, when a node is detected to be unavailable
+  // and etcd is not yet aware, the client updates it.
+  bool inform_on_unavailable = true;
+
   // If true, after a status UNAVAILABLE is received, the client waits
   // until the cluster is healthy again, and then retries the request.
   bool wait_on_unhealthy = true;

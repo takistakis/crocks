@@ -146,7 +146,8 @@ Status ClusterImpl::Operation(const std::function<Status(Node*)>& op,
     Node* new_node = NodeForKey(key);
     if (new_node == node) {
       int id = IndexForKey(key);
-      info_.SetAvailable(id, false);
+      if (options_.inform_on_unavailable)
+        info_.SetAvailable(id, false);
       delete nodes_[id];
       nodes_[id] = nullptr;
       if (!options_.wait_on_unhealthy)
