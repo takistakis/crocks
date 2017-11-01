@@ -234,6 +234,8 @@ bool ShardImporter::WriteChunk(const pb::MigrateResponse& response) {
   if (response.eof()) {
     largest_key_ = response.largest_key();
     out_.close();
+    out_.flush();
+    out_.rdbuf()->pubsync();
     SaveState();
     return true;
   }
