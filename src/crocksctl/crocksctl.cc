@@ -29,6 +29,7 @@
 #include "src/client/cluster_impl.h"
 #include "src/client/node.h"
 #include "src/common/info.h"
+#include "src/common/util.h"
 
 const std::string usage_message(
     "Usage: crocksctl [options] command [args]...\n"
@@ -174,8 +175,7 @@ void Info(const std::string& address) {
 }
 
 int main(int argc, char** argv) {
-  std::string etcd_address = "localhost:2379";
-
+  std::string etcd_address = crocks::GetEtcdEndpoint();
   const char* optstring = "e:h";
   static struct option longopts[] = {
       {"etcd", required_argument, 0, 'e'},

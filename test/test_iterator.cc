@@ -24,9 +24,10 @@
 #include <crocks/iterator.h>
 #include <crocks/status.h>
 #include <crocks/write_batch.h>
+#include "src/common/util.h"
 
 int main() {
-  crocks::Cluster* db = crocks::DBOpen("localhost:2379");
+  crocks::Cluster* db = crocks::DBOpen(crocks::GetEtcdEndpoint());
 
   // Put some key-values in the database in random order
   {

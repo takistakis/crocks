@@ -29,11 +29,12 @@
 #include <crocks/iterator.h>
 #include <crocks/status.h>
 #include <crocks/write_batch.h>
+#include "src/common/util.h"
 
 const int kNumItems = 10000;
 
 void Thread(const std::string& value, bool lock) {
-  crocks::Cluster* db = crocks::DBOpen("localhost:2379");
+  crocks::Cluster* db = crocks::DBOpen(crocks::GetEtcdEndpoint());
   crocks::WriteBatch batch(db);
   for (int i = 0; i < kNumItems; i++)
     batch.Put(std::to_string(i), value);
@@ -46,7 +47,7 @@ void Thread(const std::string& value, bool lock) {
 
 int CountOnes() {
   int i = 0;
-  crocks::Cluster* db = crocks::DBOpen("localhost:2379");
+  crocks::Cluster* db = crocks::DBOpen(crocks::GetEtcdEndpoint());
   crocks::Iterator* it = new crocks::Iterator(db);
   for (it->SeekToFirst(); it->Valid(); it->Next())
     if (it->value() == "1")

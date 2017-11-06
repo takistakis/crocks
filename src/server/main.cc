@@ -23,6 +23,7 @@
 #include <iostream>
 #include <string>
 
+#include "src/common/util.h"
 #include "src/server/async_server.h"
 
 const std::string version("crocks v0.1.0");
@@ -47,7 +48,7 @@ int main(int argc, char** argv) {
   std::string options_path;
   std::string hostname = "localhost";
   std::string port = "0";
-  std::string etcd_address = "localhost:2379";
+  std::string etcd_address = crocks::GetEtcdEndpoint();
   int num_threads = 2;
 
   const char* optstring = "p:o:H:P:e:t:dvh";

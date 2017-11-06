@@ -24,9 +24,10 @@
 #include <crocks/status.h>
 #include "src/client/node.h"
 #include "src/common/info.h"
+#include "src/common/util.h"
 
 int main() {
-  crocks::Info info("localhost:2379");
+  crocks::Info info(crocks::GetEtcdEndpoint());
   info.Get();
 
   // Find a key intended for node 0

@@ -16,6 +16,7 @@
 // along with crocks.  If not, see <http://www.gnu.org/licenses/>.
 
 #include <assert.h>
+#include <stdio.h>
 
 #include <iostream>
 #include <string>
@@ -23,6 +24,7 @@
 #include <crocks/cluster.h>
 #include <crocks/status.h>
 #include <crocks/write_batch.h>
+#include "src/common/util.h"
 
 #include "util.h"
 
@@ -59,7 +61,7 @@ inline void TestRandom(crocks::Cluster* db) {
 
 int main() {
   RandomInit();
-  crocks::Cluster* db = crocks::DBOpen("localhost:2379");
+  crocks::Cluster* db = crocks::DBOpen(crocks::GetEtcdEndpoint());
 
   Measure(TestSingle, db);
   std::cout << std::endl;

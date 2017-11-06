@@ -19,6 +19,7 @@
 #define CROCKS_COMMON_UTIL_H
 
 #include <functional>
+#include <string>
 
 #include <grpc++/grpc++.h>
 
@@ -26,6 +27,13 @@ namespace crocks {
 
 // Make RPC and if it fails with status UNAVAILABLE, retry once
 grpc::Status Ensure(std::function<grpc::Status(grpc::ClientContext*)> rpc);
+
+// Get environment variable, and return whether it was set
+bool GetEnv(const char* name, std::string* value);
+
+// Return the etcd endpoint from ETCD_ENDPOINT environment variable,
+// and fall back to the default (localhost:2379) if it's not set.
+std::string GetEtcdEndpoint();
 
 }  // namespace crocks
 

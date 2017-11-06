@@ -20,6 +20,7 @@
 
 #include <crocks/cluster.h>
 #include <crocks/status.h>
+#include "src/common/util.h"
 
 inline void TestGet(crocks::Cluster* db, const std::string& key) {
   crocks::Status status;
@@ -48,7 +49,7 @@ inline void TestDelete(crocks::Cluster* db, const std::string& key) {
 }
 
 int main() {
-  crocks::Cluster* db = crocks::DBOpen("localhost:2379");
+  crocks::Cluster* db = crocks::DBOpen(crocks::GetEtcdEndpoint());
 
   TestPut(db, "asdf", "asdf");
   TestGet(db, "asdf");

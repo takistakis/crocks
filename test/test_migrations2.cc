@@ -21,6 +21,7 @@
 #include <crocks/cluster.h>
 #include <crocks/status.h>
 #include <crocks/write_batch.h>
+#include "src/common/util.h"
 
 #include "util.h"
 
@@ -35,7 +36,7 @@ inline void TestBatch(crocks::Cluster* db) {
 
 int main() {
   RandomInit();
-  crocks::Cluster* db = crocks::DBOpen("localhost:2379");
+  crocks::Cluster* db = crocks::DBOpen(crocks::GetEtcdEndpoint());
 
   for (int i = 0; i < 1000; i++) {
     Measure(TestBatch, db);

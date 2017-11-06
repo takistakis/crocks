@@ -21,8 +21,10 @@
 #include <iostream>
 #include <thread>
 
+#include "src/common/util.h"
+
 void Thread() {
-  crocks::EtcdClient etcd("localhost:2379");
+  crocks::EtcdClient etcd(crocks::GetEtcdEndpoint());
 
   std::cout << "thread 2: trying to get lock" << std::endl;
   etcd.Lock();
@@ -31,7 +33,7 @@ void Thread() {
 }
 
 int main() {
-  crocks::EtcdClient etcd("localhost:2379");
+  crocks::EtcdClient etcd(crocks::GetEtcdEndpoint());
 
   etcd.Lock();
   std::cout << "thread 1: got lock" << std::endl;

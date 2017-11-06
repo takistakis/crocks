@@ -27,6 +27,7 @@
 
 #include <crocks/cluster.h>
 #include <crocks/status.h>
+#include "src/common/util.h"
 
 #include "util.h"
 
@@ -48,7 +49,7 @@ void yo(crocks::Cluster* db, const std::string& prefix, int i) {
 }
 
 int main(int argc, char** argv) {
-  crocks::Cluster* db = crocks::DBOpen("localhost:2379");
+  crocks::Cluster* db = crocks::DBOpen(crocks::GetEtcdEndpoint());
 
   std::string prefix = (argc == 1) ? "" : argv[1];
 

@@ -17,6 +17,8 @@
 
 #include "src/common/util.h"
 
+#include <stdlib.h>
+
 #include <chrono>
 #include <iostream>
 
@@ -36,6 +38,19 @@ grpc::Status Ensure(std::function<grpc::Status(grpc::ClientContext*)> rpc) {
       status = retry_status;
   }
   return status;
+}
+
+bool GetEnv(const char* name, std::string* value) {
+  char* tmp = secure_getenv(name);
+  if (tmp == NULL)
+    return false;
+  *value = tmp;
+  return true;
+}
+
+std::string GetEtcdEndpoint() {
+  std::string value;
+  return GetEnv("ETCD_ENDPOINT", &value) ? value : "localhost:2379";
 }
 
 }  // namespace crocks
