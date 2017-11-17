@@ -798,14 +798,20 @@ void AsyncServer::Init(const std::string& listening_address,
         rocksdb::DB::Open(options_, dbpath_, cf_descriptors, &cf_handles, &db_);
     EnsureRocksdb("Open", s);
     shards_ = new Shards(db_, cf_handles);
+    std::cout << std::endl;
     for (auto cf : cf_handles) {
       if (cf->GetName() == "default") {
         // XXX: We just keep a copy to delete it on shutdown
         // and exit cleanly. Apparently it's only needed for
         // this DB::Open constructor and not for the default.
         default_cf_ = cf;
-        break;
+        continue;
       }
+      std::cout << "      Shard " << cf->GetName() << std::endl;
+      std::string stats;
+      if (!db_->GetProperty(cf, "rocksdb.levelstats", &stats))
+        stats = "(failed)";
+      std::cout << stats.c_str() << std::endl;
     }
   } else {
     rocksdb::Status s = rocksdb::DB::Open(options_, dbpath_, &db_);
