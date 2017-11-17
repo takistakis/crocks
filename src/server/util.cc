@@ -21,10 +21,16 @@
 #include <stdlib.h>
 
 #include <iostream>
+#include <memory>
 #include <string>
+#include <vector>
 
 #include <rocksdb/advanced_options.h>
+#include <rocksdb/compaction_job_stats.h>
+#include <rocksdb/db.h>
+#include <rocksdb/listener.h>
 #include <rocksdb/slice.h>
+#include <rocksdb/table_properties.h>
 #include <rocksdb/write_batch.h>
 
 #include <crocks/status.h>
@@ -129,16 +135,47 @@ void ApplyIteratorRequest(MultiIterator* it, const pb::IteratorRequest& request,
   }
 }
 
+class Listener : public rocksdb::EventListener {
+ public:
+  explicit Listener() {}
+
+  void OnFlushCompleted(rocksdb::DB* db,
+                        const rocksdb::FlushJobInfo& info) override {
+    if (info.cf_name == "default")
+      return;
+    std::cout << "Flush from shard " << info.cf_name << std::endl;
+    raw += info.table_properties.raw_key_size +
+           info.table_properties.raw_value_size;
+    // Multiply by 2 because they were also written to the WAL
+    written += 2 * info.table_properties.data_size;
+  }
+
+  void OnCompactionCompleted(rocksdb::DB* db,
+                             const rocksdb::CompactionJobInfo& info) override {
+    if (info.cf_name == "default")
+      return;
+    std::cout << "Compaction in shard " << info.cf_name << ": "
+              << info.input_files.size() << " from L" << info.base_input_level
+              << " -> " << info.output_files.size() << " in L"
+              << info.output_level << std::endl;
+    written += info.stats.total_output_bytes;
+    std::cout << "Write amplification: " << (double)written / raw << std::endl;
+  }
+
+ private:
+  uint64_t raw = 0;
+  uint64_t written = 0;
+};
+
 rocksdb::Options DefaultRocksdbOptions() {
   rocksdb::Options options;
-
   options.create_if_missing = true;
   options.IncreaseParallelism(4);
   options.OptimizeLevelStyleCompaction();
   options.compaction_pri = rocksdb::kOldestSmallestSeqFirst;
   options.level_compaction_dynamic_level_bytes = true;
   options.allow_ingest_behind = true;
-
+  options.listeners.push_back(std::make_shared<Listener>());
   return options;
 }
 
