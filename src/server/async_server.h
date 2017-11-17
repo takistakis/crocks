@@ -23,11 +23,16 @@
 #include <thread>
 #include <vector>
 
-#include <grpc++/grpc++.h>
 #include <rocksdb/options.h>
 
 #include "gen/crocks.grpc.pb.h"
 #include "src/common/info.h"
+
+namespace grpc {
+class Server;
+class ServerCompletionQueue;
+class Status;
+}  // namespace grpc
 
 namespace rocksdb {
 class ColumnFamilyHandle;

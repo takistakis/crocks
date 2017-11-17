@@ -37,9 +37,9 @@ Shard::Shard(rocksdb::DB* db, int shard, const std::string& old_address)
       migrating_(false),
       refs_(1),
       old_address_(old_address) {
-  rocksdb::ColumnFamilyOptions options;
   std::string name = std::to_string(shard);
-  rocksdb::Status s = db_->CreateColumnFamily(options, name, &cf_);
+  rocksdb::Status s =
+      db_->CreateColumnFamily(DefaultColumnFamilyOptions(), name, &cf_);
   EnsureRocksdb("CreateColumnFamily", s);
 }
 
@@ -129,8 +129,8 @@ Shards::Shards(rocksdb::DB* db, const std::vector<int>& shards) : db_(db) {
   for (int shard : shards)
     names.push_back(std::to_string(shard));
   std::vector<rocksdb::ColumnFamilyHandle*> handles;
-  rocksdb::Status s = db_->CreateColumnFamilies(rocksdb::ColumnFamilyOptions(),
-                                                names, &handles);
+  rocksdb::Status s =
+      db_->CreateColumnFamilies(DefaultColumnFamilyOptions(), names, &handles);
   EnsureRocksdb("CreateColumnFamilies", s);
   int i = 0;
   for (int shard : shards)

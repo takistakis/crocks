@@ -28,7 +28,9 @@
 #include <unordered_map>
 #include <utility>
 
+#include <grpc++/grpc++.h>
 #include <rocksdb/db.h>
+#include <rocksdb/env.h>
 #include <rocksdb/status.h>
 #include <rocksdb/utilities/options_util.h>
 #include <rocksdb/write_batch.h>
@@ -788,9 +790,9 @@ void AsyncServer::Init(const std::string& listening_address,
   if (!column_families.empty()) {
     std::cerr << info_.id() << ": Recovering from crash" << std::endl;
     std::vector<rocksdb::ColumnFamilyDescriptor> cf_descriptors;
-    rocksdb::ColumnFamilyOptions cf_options;
     for (auto name : column_families) {
-      rocksdb::ColumnFamilyDescriptor descriptor(name, cf_options);
+      rocksdb::ColumnFamilyDescriptor descriptor(name,
+                                                 DefaultColumnFamilyOptions());
       cf_descriptors.push_back(descriptor);
     }
     std::vector<rocksdb::ColumnFamilyHandle*> cf_handles;

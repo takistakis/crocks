@@ -19,23 +19,31 @@
 
 #include <assert.h>
 #include <stdlib.h>
+#include <unistd.h>
 
+#include <algorithm>
 #include <iostream>
 #include <memory>
 #include <string>
+#include <thread>
 #include <vector>
 
 #include <rocksdb/advanced_options.h>
 #include <rocksdb/compaction_job_stats.h>
-#include <rocksdb/db.h>
+#include <rocksdb/filter_policy.h>
 #include <rocksdb/listener.h>
 #include <rocksdb/slice.h>
+#include <rocksdb/table.h>
 #include <rocksdb/table_properties.h>
 #include <rocksdb/write_batch.h>
 
 #include <crocks/status.h>
 #include "gen/crocks.pb.h"
 #include "src/server/iterator.h"
+
+namespace rocksdb {
+class DB;
+}
 
 namespace crocks {
 
@@ -167,14 +175,41 @@ class Listener : public rocksdb::EventListener {
   uint64_t written = 0;
 };
 
+uint64_t GetTotalSystemMemory() {
+  long pages = sysconf(_SC_PHYS_PAGES);
+  long page_size = sysconf(_SC_PAGE_SIZE);
+  return pages * page_size;
+}
+
+rocksdb::ColumnFamilyOptions DefaultColumnFamilyOptions() {
+  rocksdb::ColumnFamilyOptions cf_options;
+  cf_options.OptimizeLevelStyleCompaction();
+  cf_options.level_compaction_dynamic_level_bytes = true;
+  cf_options.compression = rocksdb::kLZ4Compression;
+  cf_options.bottommost_compression = rocksdb::kZSTD;
+  return cf_options;
+}
+
 rocksdb::Options DefaultRocksdbOptions() {
+  // https://github.com/facebook/rocksdb/wiki/Set-Up-Options
+  rocksdb::BlockBasedTableOptions table_options;
+  table_options.filter_policy.reset(rocksdb::NewBloomFilterPolicy(10, false));
+  table_options.block_size = 16 * 1024;
+  table_options.cache_index_and_filter_blocks = true;
+  table_options.pin_l0_filter_and_index_blocks_in_cache = true;
   rocksdb::Options options;
+  options.table_factory.reset(NewBlockBasedTableFactory(table_options));
   options.create_if_missing = true;
-  options.IncreaseParallelism(4);
+  options.IncreaseParallelism(
+      std::max(std::thread::hardware_concurrency(), 2U));
   options.OptimizeLevelStyleCompaction();
-  options.compaction_pri = rocksdb::kOldestSmallestSeqFirst;
-  options.level_compaction_dynamic_level_bytes = true;
+  options.compaction_pri = rocksdb::kMinOverlappingRatio;
+  options.max_total_wal_size = 100 << 20;
+  options.write_buffer_size = 16 << 20;
+  options.db_write_buffer_size = GetTotalSystemMemory() / 4;
   options.allow_ingest_behind = true;
+  options.level0_slowdown_writes_trigger = 8;
+  options.level0_stop_writes_trigger = 10;
   options.listeners.push_back(std::make_shared<Listener>());
   return options;
 }

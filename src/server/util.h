@@ -26,7 +26,7 @@
 namespace rocksdb {
 class ColumnFamilyHandle;
 class WriteBatch;
-}
+}  // namespace rocksdb
 
 namespace crocks {
 
@@ -34,7 +34,7 @@ namespace pb {
 class BatchUpdate;
 class IteratorRequest;
 class IteratorResponse;
-}
+}  // namespace pb
 
 class MultiIterator;
 
@@ -51,6 +51,7 @@ void ApplyIteratorRequest(MultiIterator* iterator,
                           const pb::IteratorRequest& request,
                           pb::IteratorResponse* response);
 
+rocksdb::ColumnFamilyOptions DefaultColumnFamilyOptions();
 rocksdb::Options DefaultRocksdbOptions();
 
 }  // namespace crocks
