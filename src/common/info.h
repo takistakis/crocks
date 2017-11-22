@@ -20,7 +20,6 @@
 #ifndef CROCKS_COMMON_INFO_H
 #define CROCKS_COMMON_INFO_H
 
-#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -28,6 +27,7 @@
 #include "src/common/etcd_client.h"
 #include "src/common/hash.h"
 #include "src/common/info_wrapper.h"
+#include "src/common/lock.h"
 
 const std::string kInfoKey = "info";
 
@@ -50,7 +50,7 @@ class Info {
   }
 
   int IndexForShard(int id) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return map_[id];
   }
 
@@ -59,13 +59,13 @@ class Info {
   }
 
   int IndexForKey(const std::string& key) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return map_[Hash(key) % info_.num_shards()];
   }
 
   // Return true if the given shard is intended for a different node
   bool WrongShard(int shard) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return map_[shard] != id_;
   }
 
@@ -146,12 +146,12 @@ class Info {
 
  private:
   void Parse(const std::string& str) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    write_lock lock(mutex_);
     info_.Parse(str);
     map_ = info_.map();
   }
 
-  mutable std::mutex mutex_;
+  mutable shared_mutex mutex_;
   EtcdClient etcd_;
   InfoWrapper info_;
   std::vector<int> map_;

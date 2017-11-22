@@ -203,7 +203,7 @@ void Info::GiveShard(int shard) {
         etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
   } while (!succeeded);
   {
-    std::lock_guard<std::mutex> lock(mutex_);
+    write_lock lock(mutex_);
     map_ = info_.map();
   }
 }

@@ -22,7 +22,7 @@
 namespace crocks {
 
 int InfoWrapper::AddNode(const std::string& address) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  write_lock lock(mutex_);
   int id = info_.nodes_size();
   pb::NodeInfo* node = info_.add_nodes();
   node->set_address(address);
@@ -32,7 +32,7 @@ int InfoWrapper::AddNode(const std::string& address) {
 }
 
 int InfoWrapper::AddNodeWithNewShards(const std::string& address) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  write_lock lock(mutex_);
   int id = info_.nodes_size();
   pb::NodeInfo* node = info_.add_nodes();
   node->set_address(address);
@@ -47,7 +47,7 @@ int InfoWrapper::AddNodeWithNewShards(const std::string& address) {
 }
 
 void InfoWrapper::MarkRemoveNode(int id) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  write_lock lock(mutex_);
   pb::NodeInfo* node = info_.mutable_nodes(id);
   if (node->address().empty())
     return;
@@ -55,12 +55,12 @@ void InfoWrapper::MarkRemoveNode(int id) {
 }
 
 void InfoWrapper::RemoveNode(int id) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  write_lock lock(mutex_);
   info_.mutable_nodes(id)->Clear();
 }
 
 void InfoWrapper::RedistributeShards() {
-  std::lock_guard<std::mutex> lock(mutex_);
+  write_lock lock(mutex_);
   int num_nodes = 0;
   for (const auto& node : info_.nodes())
     if (!node.remove() && !node.address().empty())
@@ -111,7 +111,7 @@ void InfoWrapper::RedistributeShards() {
 }
 
 std::unordered_map<int, std::vector<int>> InfoWrapper::Tasks(int id) const {
-  std::lock_guard<std::mutex> lock(mutex_);
+  read_lock lock(mutex_);
   std::unordered_map<int, std::vector<int>> tasks;
   assert(id >= 0);
   int i = 0;
@@ -124,7 +124,7 @@ std::unordered_map<int, std::vector<int>> InfoWrapper::Tasks(int id) const {
 }
 
 void InfoWrapper::GiveShard(int id, int shard_id) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  write_lock lock(mutex_);
   pb::ShardInfo* shard = info_.mutable_shards(shard_id);
   if (shard->master() != id)
     // We have already given the shard. The call must have been
@@ -142,7 +142,7 @@ void InfoWrapper::GiveShard(int id, int shard_id) {
 }
 
 void InfoWrapper::MigrationOver(int shard_id) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  write_lock lock(mutex_);
   pb::ShardInfo* shard = info_.mutable_shards(shard_id);
   shard->set_migrating(false);
   shard->clear_from();
@@ -155,7 +155,7 @@ void InfoWrapper::MigrationOver(int shard_id) {
 }
 
 void InfoWrapper::SetAvailable(int id, bool available) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  write_lock lock(mutex_);
   pb::NodeInfo* node = info_.mutable_nodes(id);
   node->set_available(available);
 }

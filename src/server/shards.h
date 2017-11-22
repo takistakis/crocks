@@ -28,10 +28,12 @@
 
 #include <rocksdb/status.h>
 
+#include "src/common/lock.h"
+
 namespace rocksdb {
 class DB;
 class ColumnFamilyHandle;
-}
+}  // namespace rocksdb
 
 namespace crocks {
 
@@ -90,7 +92,7 @@ class Shard {
   std::mutex ref_mutex_;
   std::string old_address_;
   std::string largest_key_;
-  mutable std::mutex largest_key_mutex_;
+  mutable shared_mutex largest_key_mutex_;
 };
 
 class Shards {
@@ -100,16 +102,14 @@ class Shards {
          const std::vector<rocksdb::ColumnFamilyHandle*>& handles);
 
   std::shared_ptr<Shard> at(int id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    auto shard = shards_[id];
-    // Accesing a nonexistent shard creates it and we don't want it
-    if (!shard)
-      shards_.erase(id);
-    return shard;
+    read_lock lock(mutex_);
+    if (shards_.find(id) == shards_.end())
+      return std::shared_ptr<Shard>();
+    return shards_[id];
   }
 
   bool empty() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return shards_.empty();
   }
 
@@ -120,7 +120,7 @@ class Shards {
   std::vector<rocksdb::ColumnFamilyHandle*> ColumnFamilies() const;
 
  private:
-  mutable std::mutex mutex_;
+  mutable shared_mutex mutex_;
   rocksdb::DB* db_;
   std::unordered_map<int, std::shared_ptr<Shard>> shards_;
 };

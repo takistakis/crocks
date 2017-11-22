@@ -53,7 +53,7 @@ rocksdb::Status Shard::Get(const std::string& key, std::string* value,
   rocksdb::Status s;
   bool not_ingested_up_to_key;
   {
-    std::lock_guard<std::mutex> lock(largest_key_mutex_);
+    read_lock lock(largest_key_mutex_);
     not_ingested_up_to_key = key > largest_key_;
   }
   // The get must take place after not_ingested_up_to_key
@@ -88,7 +88,7 @@ void Shard::Ingest(const std::string& filename,
   if (!s.IsIOError())
     EnsureRocksdb("IngestExternalFile", s);
   {
-    std::lock_guard<std::mutex> lock(largest_key_mutex_);
+    write_lock lock(largest_key_mutex_);
     largest_key_ = largest_key;
   }
 }
@@ -152,19 +152,19 @@ Shards::Shards(rocksdb::DB* db,
 }
 
 std::shared_ptr<Shard> Shards::Add(int id, const std::string& old_address) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  write_lock lock(mutex_);
   auto shard = std::make_shared<Shard>(db_, id, old_address);
   shards_[id] = shard;
   return shard;
 }
 
 void Shards::Remove(int id) {
-  std::lock_guard<std::mutex> lock(mutex_);
+  write_lock lock(mutex_);
   shards_.erase(id);
 }
 
 std::vector<rocksdb::ColumnFamilyHandle*> Shards::ColumnFamilies() const {
-  std::lock_guard<std::mutex> lock(mutex_);
+  read_lock lock(mutex_);
   std::vector<rocksdb::ColumnFamilyHandle*> column_families;
   for (const auto& pair : shards_) {
     Shard* shard = pair.second.get();

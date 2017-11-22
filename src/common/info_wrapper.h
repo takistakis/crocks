@@ -23,12 +23,12 @@
 
 #include <assert.h>
 
-#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <vector>
 
 #include "gen/info.pb.h"
+#include "src/common/lock.h"
 
 const int kShardsPerNode = 10;
 
@@ -37,17 +37,17 @@ namespace crocks {
 class InfoWrapper {
  public:
   int num_shards() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return info_.shards_size();
   }
 
   int num_nodes() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return info_.nodes_size();
   }
 
   std::vector<int> shards(int id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     std::vector<int> shards;
     assert(id >= 0);
     int i = 0;
@@ -60,7 +60,7 @@ class InfoWrapper {
   };
 
   std::vector<int> future(int id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     std::vector<int> future;
     assert(id >= 0);
     int i = 0;
@@ -73,7 +73,7 @@ class InfoWrapper {
   };
 
   std::vector<int> map() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     std::vector<int> map;
     for (const auto& shard : info_.shards())
       map.push_back(shard.master());
@@ -81,7 +81,7 @@ class InfoWrapper {
   }
 
   std::string Serialize() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     std::string str;
     bool ok = info_.SerializeToString(&str);
     assert(ok);
@@ -89,13 +89,13 @@ class InfoWrapper {
   }
 
   void Parse(const std::string& str) {
-    std::lock_guard<std::mutex> lock(mutex_);
+    write_lock lock(mutex_);
     bool ok = info_.ParseFromString(str);
     assert(ok);
   }
 
   std::vector<std::string> Addresses() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     std::vector<std::string> addresses;
     for (const auto& node : info_.nodes())
       addresses.push_back(node.address());
@@ -103,12 +103,12 @@ class InfoWrapper {
   };
 
   std::string Address(int id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return info_.nodes(id).address();
   };
 
   int IndexOf(const std::string& address) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     for (const auto& node : info_.nodes())
       if (node.address() == address)
         return node.id();
@@ -116,32 +116,32 @@ class InfoWrapper {
   }
 
   bool IsRemoved(int id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return info_.nodes(id).remove();
   }
 
   bool IsInit() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return info_.state() == pb::ClusterInfo::INIT;
   }
 
   bool IsRunning() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return info_.state() == pb::ClusterInfo::RUNNING;
   }
 
   bool IsMigrating() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return info_.state() == pb::ClusterInfo::MIGRATING;
   }
 
   bool IsMigrating(int shard) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return info_.shards(shard).migrating();
   }
 
   bool NoMigrations() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     for (const auto& shard : info_.shards())
       if (shard.migrating())
         return false;
@@ -149,12 +149,12 @@ class InfoWrapper {
   }
 
   bool IsAvailable(int id) const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     return info_.nodes(id).available();
   }
 
   bool IsHealthy() const {
-    std::lock_guard<std::mutex> lock(mutex_);
+    read_lock lock(mutex_);
     for (const auto& node : info_.nodes())
       if (!node.available())
         return false;
@@ -162,12 +162,12 @@ class InfoWrapper {
   }
 
   void SetRunning() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    write_lock lock(mutex_);
     info_.set_state(pb::ClusterInfo::RUNNING);
   }
 
   void SetMigrating() {
-    std::lock_guard<std::mutex> lock(mutex_);
+    write_lock lock(mutex_);
     info_.set_state(pb::ClusterInfo::MIGRATING);
   }
 
@@ -191,7 +191,7 @@ class InfoWrapper {
 
  private:
   pb::ClusterInfo info_;
-  mutable std::mutex mutex_;
+  mutable shared_mutex mutex_;
 };
 
 }  // namespace crocks
