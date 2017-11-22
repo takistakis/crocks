@@ -22,16 +22,15 @@
 #include <algorithm>
 #include <chrono>
 #include <iostream>
+#include <string>
 #include <type_traits>
 
-#include <crocks/status.h>
-
-const int kNumKeys = 100;
+const int kNumKeys = 128;
 const int kKeySize = 16;
 char keys[kNumKeys][kKeySize];
 
-const int kNumValues = 100;
-const int kValueSize = 1024;
+const int kNumValues = 1024;
+const int kValueSize = 4000;
 char values[kNumValues][kValueSize];
 
 inline void RandomInit() {
@@ -42,12 +41,12 @@ inline void RandomInit() {
     std::generate_n(values[i], kValueSize, rand);
 }
 
-inline char* RandomKey() {
-  return keys[rand() % kNumKeys];
+std::string RandomKey() {
+  return std::string(keys[rand() % kNumKeys], kKeySize);
 }
 
-inline char* RandomValue() {
-  return values[rand() % kNumValues];
+std::string RandomValue() {
+  return std::string(values[rand() % kNumValues], kValueSize);
 }
 
 template <typename F, typename... Args>
