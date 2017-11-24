@@ -214,8 +214,6 @@ class GetCall final : public Call {
 
   void OnDone(bool ok) {
     assert(ok);
-    if (ctx_.IsCancelled())
-      std::cerr << data_->info->id() << ": Get call cancelled" << std::endl;
     on_done_called_ = true;
     if (finish_called_)
       delete this;
@@ -299,8 +297,6 @@ class PutCall final : public Call {
 
   void OnDone(bool ok) {
     assert(ok);
-    if (ctx_.IsCancelled())
-      std::cerr << data_->info->id() << ": Put call cancelled" << std::endl;
     on_done_called_ = true;
     if (finish_called_)
       delete this;
@@ -375,8 +371,6 @@ class DeleteCall final : public Call {
 
   void OnDone(bool ok) {
     assert(ok);
-    if (ctx_.IsCancelled())
-      std::cerr << data_->info->id() << ": Delete call cancelled" << std::endl;
     on_done_called_ = true;
     if (finish_called_)
       delete this;
@@ -954,7 +948,7 @@ void AsyncServer::WatchThread() {
         request.set_start_from(importer.num());
         auto stream = stub->Migrate(&context);
         if (!stream->Write(request)) {
-          std::cerr << "Error on first write" << std::endl;
+          std::cerr << info_.id() << ": Error on first write" << std::endl;
           grpc::Status status = stream->Finish();
           HandleError(status, node_id);
           continue;
@@ -964,7 +958,7 @@ void AsyncServer::WatchThread() {
         // one message will be sent. So if it is not ok, it means he
         // crashed. We cannot know if he managed to give the shard.
         if (!stream->Read(&response)) {
-          std::cerr << "Error on first read" << std::endl;
+          std::cerr << info_.id() << ": Error on first read" << std::endl;
           grpc::Status status = stream->Finish();
           if (status.error_code() == grpc::StatusCode::INVALID_ARGUMENT) {
             std::cerr << "Migration was already finished but didn't manage to "
@@ -998,7 +992,7 @@ void AsyncServer::WatchThread() {
         stream->Write(request);
         grpc::Status status = stream->Finish();
         if (!status.ok()) {
-          std::cerr << "Error on finish" << std::endl;
+          std::cerr << info_.id() << ": Error on finish" << std::endl;
           HandleError(status, node_id);
           continue;
         }
