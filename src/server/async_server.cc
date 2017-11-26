@@ -62,7 +62,6 @@ struct CallData {
 class Call {
  public:
   virtual void Proceed(bool ok) = 0;
-  virtual void Delete() = 0;
 };
 
 class PingCall final : public Call {
@@ -79,13 +78,13 @@ class PingCall final : public Call {
   void Proceed(bool ok) {
     switch (status_) {
       case REQUEST:
-        new PingCall(data_);
         if (!ok) {
-          std::cerr << "Ping in REQUEST was not ok. Finishing." << std::endl;
-          responder_.FinishWithError(grpc::Status::CANCELLED, &proceed);
-          status_ = FINISH;
+          // Not ok in REQUEST means the server has been Shutdown
+          // before the call got matched to an incoming RPC.
+          delete this;
           break;
         }
+        new PingCall(data_);
         responder_.Finish(response_, grpc::Status::OK, &proceed);
         status_ = FINISH;
         break;
@@ -107,10 +106,6 @@ class PingCall final : public Call {
       delete this;
     else
       status_ = FINISH;
-  }
-
-  void Delete() {
-    delete this;
   }
 
   std::function<void(bool)> proceed;
@@ -147,13 +142,11 @@ class GetCall final : public Call {
 
     switch (status_) {
       case REQUEST:
-        new GetCall(data_);
         if (!ok) {
-          std::cerr << "Get in REQUEST was not ok. Finishing." << std::endl;
-          responder_.FinishWithError(grpc::Status::CANCELLED, &proceed);
-          status_ = FINISH;
+          delete this;
           break;
         }
+        new GetCall(data_);
         shard_id = data_->info->ShardForKey(request_.key());
         if (data_->info->WrongShard(shard_id) && !request_.force()) {
           responder_.FinishWithError(invalid_status, &proceed);
@@ -221,10 +214,6 @@ class GetCall final : public Call {
       status_ = FINISH;
   }
 
-  void Delete() {
-    delete this;
-  }
-
   std::function<void(bool)> proceed;
   std::function<void(bool)> on_done;
 
@@ -267,13 +256,11 @@ class PutCall final : public Call {
 
     switch (status_) {
       case REQUEST:
-        new PutCall(data_);
         if (!ok) {
-          std::cerr << "Put in REQUEST was not ok. Finishing." << std::endl;
-          responder_.FinishWithError(grpc::Status::CANCELLED, &proceed);
-          status_ = FINISH;
+          delete this;
           break;
         }
+        new PutCall(data_);
         shard_id = data_->info->ShardForKey(request_.key());
         shard = data_->shards->at(shard_id);
         if (!shard || !shard->Ref()) {
@@ -302,10 +289,6 @@ class PutCall final : public Call {
       delete this;
     else
       status_ = FINISH;
-  }
-
-  void Delete() {
-    delete this;
   }
 
   std::function<void(bool)> proceed;
@@ -341,13 +324,11 @@ class DeleteCall final : public Call {
 
     switch (status_) {
       case REQUEST:
-        new DeleteCall(data_);
         if (!ok) {
-          std::cerr << "Delete in REQUEST was not ok. Finishing." << std::endl;
-          responder_.FinishWithError(grpc::Status::CANCELLED, &proceed);
-          status_ = FINISH;
+          delete this;
           break;
         }
+        new DeleteCall(data_);
         shard_id = data_->info->ShardForKey(request_.key());
         shard = data_->shards->at(shard_id);
         if (!shard || !shard->Ref()) {
@@ -376,10 +357,6 @@ class DeleteCall final : public Call {
       delete this;
     else
       status_ = FINISH;
-  }
-
-  void Delete() {
-    delete this;
   }
 
   std::function<void(bool)> proceed;
@@ -415,13 +392,11 @@ class BatchCall final : public Call {
 
     switch (status_) {
       case REQUEST:
-        new BatchCall(data_);
         if (!ok) {
-          std::cerr << "Batch in REQUEST was not ok. Finishing." << std::endl;
-          stream_.Finish(grpc::Status::CANCELLED, &proceed);
-          status_ = FINISH;
+          delete this;
           break;
         }
+        new BatchCall(data_);
         stream_.Read(&request_, &proceed);
         status_ = READ;
         assert(request_.updates_size() == 0);
@@ -496,10 +471,6 @@ class BatchCall final : public Call {
       status_ = FINISH;
   }
 
-  void Delete() {
-    delete this;
-  }
-
   std::function<void(bool)> proceed;
   std::function<void(bool)> on_done;
 
@@ -530,19 +501,15 @@ class IteratorCall final : public Call {
   }
 
   void Proceed(bool ok) {
-    std::vector<rocksdb::ColumnFamilyHandle*> column_families;
-
     switch (status_) {
       case REQUEST:
-        new IteratorCall(data_);
         if (!ok) {
-          std::cerr << "Iterator in REQUEST was not ok. Finishing."
-                    << std::endl;
-          stream_.Finish(grpc::Status::CANCELLED, &proceed);
-          status_ = FINISH;
+          delete this;
           break;
         }
-        it_ = new MultiIterator(data_->db, data_->shards->ColumnFamilies());
+        new IteratorCall(data_);
+        it_ = std::unique_ptr<MultiIterator>(
+            new MultiIterator(data_->db, data_->shards->ColumnFamilies()));
         stream_.Read(&request_, &proceed);
         status_ = READ;
         break;
@@ -550,7 +517,7 @@ class IteratorCall final : public Call {
       case READ:
         if (ok) {
           response_.Clear();
-          ApplyIteratorRequest(it_, request_, &response_);
+          ApplyIteratorRequest(it_.get(), request_, &response_);
           stream_.Write(response_, &proceed);
           status_ = WRITE;
         } else {
@@ -570,7 +537,6 @@ class IteratorCall final : public Call {
         break;
 
       case FINISH:
-        delete it_;
         finish_called_ = true;
         if (on_done_called_)
           delete this;
@@ -590,10 +556,6 @@ class IteratorCall final : public Call {
       status_ = FINISH;
   }
 
-  void Delete() {
-    delete this;
-  }
-
   std::function<void(bool)> proceed;
   std::function<void(bool)> on_done;
 
@@ -606,7 +568,7 @@ class IteratorCall final : public Call {
   pb::IteratorResponse response_;
   enum CallStatus { REQUEST, READ, WRITE, FINISH };
   CallStatus status_;
-  MultiIterator* it_ = nullptr;
+  std::unique_ptr<MultiIterator> it_;
   bool finish_called_ = false;
   bool on_done_called_ = false;
 };
@@ -645,13 +607,11 @@ class MigrateCall final : public Call {
 
     switch (status_) {
       case REQUEST:
-        new MigrateCall(data_);
         if (!ok) {
-          std::cerr << "Migrate in REQUEST was not ok. Finishing." << std::endl;
-          stream_.Finish(grpc::Status::CANCELLED, &proceed);
-          status_ = FINISH;
+          delete this;
           break;
         }
+        new MigrateCall(data_);
         stream_.Read(&request_, &proceed);
         status_ = READ;
         break;
@@ -741,10 +701,6 @@ class MigrateCall final : public Call {
     }
   }
 
-  void Delete() {
-    delete this;
-  }
-
   std::function<void(bool)> proceed;
   std::function<void(bool)> on_done;
 
@@ -782,17 +738,24 @@ AsyncServer::~AsyncServer() {
     (*cq)->Shutdown();
   void* tag;
   bool ok;
-  for (auto cq = cqs_.begin(); cq != cqs_.end(); ++cq)
-    while ((*cq)->Next(&tag, &ok))
-      ;
+  for (auto cq = cqs_.begin(); cq != cqs_.end(); ++cq) {
+    while ((*cq)->Next(&tag, &ok)) {
+      auto proceed = static_cast<std::function<void(bool)>*>(tag);
+      (*proceed)(ok);
+    }
+  }
   migrate_cq_->Shutdown();
-  while (migrate_cq_->Next(&tag, &ok))
-    ;
+  while (migrate_cq_->Next(&tag, &ok)) {
+    auto proceed = static_cast<std::function<void(bool)>*>(tag);
+    (*proceed)(ok);
+  }
   info_.WatchCancel(call_);
   watcher_.join();
   info_.WatchEnd(call_);
   delete shards_;
+  delete default_cf_;
   delete db_;
+  rocksdb::DestroyDB(dbpath_, options_);
 }
 
 void AsyncServer::Init(const std::string& listening_address,
@@ -824,7 +787,6 @@ void AsyncServer::Init(const std::string& listening_address,
   db_->ListColumnFamilies(options_, dbpath_, &column_families);
   if (!column_families.empty()) {
     std::cerr << info_.id() << ": Recovering from crash" << std::endl;
-    column_families.push_back("default");
     std::vector<rocksdb::ColumnFamilyDescriptor> cf_descriptors;
     rocksdb::ColumnFamilyOptions cf_options;
     for (auto name : column_families) {
@@ -836,6 +798,15 @@ void AsyncServer::Init(const std::string& listening_address,
         rocksdb::DB::Open(options_, dbpath_, cf_descriptors, &cf_handles, &db_);
     EnsureRocksdb("Open", s);
     shards_ = new Shards(db_, cf_handles);
+    for (auto cf : cf_handles) {
+      if (cf->GetName() == "default") {
+        // XXX: We just keep a copy to delete it on shutdown
+        // and exit cleanly. Apparently it's only needed for
+        // this DB::Open constructor and not for the default.
+        default_cf_ = cf;
+        break;
+      }
+    }
   } else {
     rocksdb::Status s = rocksdb::DB::Open(options_, dbpath_, &db_);
     EnsureRocksdb("Open", s);
@@ -870,11 +841,6 @@ void AsyncServer::Run() {
   // https://groups.google.com/d/msg/grpc-io/qtZya6AuGAQ/Umepla-GAAAJ
   // http://www.grpc.io/grpc/cpp/classgrpc_1_1_completion_queue.html
   while (migrate_cq_->Next(&tag, &ok)) {
-    if (shutdown.load()) {
-      std::cerr << "Breaking from migrate_cq_->Next before Proceed"
-                << std::endl;
-      break;
-    }
     auto proceed = static_cast<std::function<void(bool)>*>(tag);
     (*proceed)(ok);
     if (shutdown.load())
@@ -889,14 +855,10 @@ void AsyncServer::ServeThread(int i) {
   void* tag;
   bool ok;
   while (cqs_[i]->Next(&tag, &ok)) {
-    if (shutdown.load())
-      break;
     auto proceed = static_cast<std::function<void(bool)>*>(tag);
     (*proceed)(ok);
-    if (shutdown.load()) {
-      std::cerr << "Breaking from cq_->Next after Proceed" << std::endl;
+    if (shutdown.load())
       break;
-    }
   }
 }
 

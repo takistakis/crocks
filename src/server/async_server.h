@@ -30,8 +30,9 @@
 #include "src/common/info.h"
 
 namespace rocksdb {
+class ColumnFamilyHandle;
 class DB;
-}
+}  // namespace rocksdb
 
 namespace crocks {
 
@@ -63,6 +64,7 @@ class AsyncServer final {
   std::unique_ptr<grpc::ServerCompletionQueue> migrate_cq_;
   rocksdb::DB* db_;
   rocksdb::Options options_;
+  rocksdb::ColumnFamilyHandle* default_cf_ = nullptr;
   Info info_;
   Shards* shards_;
   void* call_ = nullptr;
