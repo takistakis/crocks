@@ -52,8 +52,12 @@ crocksctl: $(PROTO_OBJECTS) $(CLIENT_OBJECTS) $(OBJDIR)/crocksctl/crocksctl.o
 
 .PHONY: test
 test: test_node test_cluster test_batch test_iterator test_wrong_shard \
-	test_lock test_lock2 test_migrations test_migrations2
+	test_lock test_lock2 test_migrations test_migrations2 bench
 test_%: $(CLIENT_OBJECTS) $(OBJDIR)/test/test_%.o
+	@echo "Linking     $@"
+	@$(CXX) $^ $(LDFLAGS) -o $@
+
+bench: $(CLIENT_OBJECTS) $(OBJDIR)/test/bench.o
 	@echo "Linking     $@"
 	@$(CXX) $^ $(LDFLAGS) -o $@
 
@@ -163,4 +167,4 @@ uninstall:
 
 .PHONY: clean
 clean:
-	rm -rf gen build crocks crocksctl libcrocks.so libcrocks.a test_*
+	rm -rf gen build crocks crocksctl libcrocks.so libcrocks.a test_* bench

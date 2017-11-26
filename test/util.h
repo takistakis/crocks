@@ -25,32 +25,51 @@
 #include <string>
 #include <type_traits>
 
-const int kNumKeys = 128;
 const int kKeySize = 16;
-char keys[kNumKeys][kKeySize];
-
 const int kNumValues = 1024;
 const int kValueSize = 4000;
+const int kKeyValueSize = kKeySize + kValueSize;
 char values[kNumValues][kValueSize];
 
 inline void RandomInit() {
   srand(time(nullptr));
-  for (int i = 0; i < kNumKeys; i++)
-    sprintf(keys[i], "%015d", i);
   for (int i = 0; i < kNumValues; i++)
     std::generate_n(values[i], kValueSize, rand);
-}
-
-std::string RandomKey() {
-  return std::string(keys[rand() % kNumKeys], kKeySize);
 }
 
 std::string RandomValue() {
   return std::string(values[rand() % kNumValues], kValueSize);
 }
 
+enum WriteMode { RANDOM, SEQUENTIAL };
+
+// Based on rocksdb::Benchmark::KeyGenerator
+// defined in rocksdb/util/db_bench_tool.cc
+class KeyGenerator {
+ public:
+  KeyGenerator(WriteMode mode, int num) : mode_(mode), num_(num), next_(0) {}
+
+  std::string Next() {
+    char key[kKeySize];
+    switch (mode_) {
+      case SEQUENTIAL:
+        sprintf(key, "%015d", next_++);
+        break;
+      case RANDOM:
+        sprintf(key, "%015d", rand() % num_);
+        break;
+    }
+    return std::string(key);
+  }
+
+ private:
+  WriteMode mode_;
+  const int num_;
+  int next_;
+};
+
 template <typename F, typename... Args>
-inline void Measure(F func, Args&&... args) {
+inline double Measure(F func, Args&&... args) {
   // steady_clock: monotonic clock that will never be adjusted.
   // Another option is high_resolution_clock, which is defined as the clock with
   // the shortest tick period available, but it seems that steady_clock is the
@@ -64,6 +83,7 @@ inline void Measure(F func, Args&&... args) {
   duration =
       std::chrono::duration_cast<std::chrono::milliseconds>(t2 - t1).count();
 
-  // return duration / 1000.0;
-  std::cout << "Done in " << duration / 1000.0 << " seconds" << std::endl;
+  double seconds = duration / 1000.0;
+  std::cout << "Done in " << seconds << " seconds" << std::endl;
+  return seconds;
 }

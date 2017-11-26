@@ -43,19 +43,18 @@ inline void TestSingle(crocks::Cluster* db) {
 inline void TestBatch(crocks::Cluster* db) {
   crocks::WriteBatch batch(db);
   std::cout << "Starting 1.500.000 batch puts" << std::endl;
-  for (int i = 0; i < 1500000; i++) {
-    char key[8];
-    sprintf(key, "%07d", i);
-    batch.Put(key, "yoyoyoyo" + std::to_string(i));
-  }
+  KeyGenerator gen(SEQUENTIAL, 0);
+  for (int i = 0; i < 1500000; i++)
+    batch.Put(gen.Next(), "yoyoyoyo" + std::to_string(i));
   EnsureRpc(batch.Write());
 }
 
 inline void TestRandom(crocks::Cluster* db) {
   crocks::WriteBatch batch(db);
   std::cout << "Starting 1.500.000 random batch puts" << std::endl;
+  KeyGenerator gen(RANDOM, 1500000);
   for (int i = 0; i < 1500000; i++)
-    batch.Put(RandomKey(), RandomValue());
+    batch.Put(gen.Next(), RandomValue());
   EnsureRpc(batch.Write());
 }
 

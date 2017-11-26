@@ -5,3 +5,4 @@
 /libcrocks.so
 /libcrocks.a
 /test_*
+/bench
