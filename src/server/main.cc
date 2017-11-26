@@ -15,9 +15,13 @@
 // You should have received a copy of the GNU General Public License
 // along with crocks.  If not, see <http://www.gnu.org/licenses/>.
 
+#include <arpa/inet.h>
 #include <getopt.h>
+#include <ifaddrs.h>
+#include <netinet/in.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <iostream>
@@ -43,10 +47,32 @@ const std::string usage_message(
     "  -v, --version          Show version and exit.\n"
     "  -h, --help             Show this help message and exit.\n");
 
+std::string GetIP() {
+  struct ifaddrs* head = nullptr;
+  struct ifaddrs* ifa = nullptr;
+  char buf[INET_ADDRSTRLEN] = "localhost";
+
+  getifaddrs(&head);
+  for (ifa = head; ifa != nullptr; ifa = ifa->ifa_next) {
+    if (!ifa->ifa_addr || (std::string(ifa->ifa_name) == "lo"))
+      continue;
+    if (ifa->ifa_addr->sa_family == AF_INET) {
+      inet_ntop(AF_INET, &((struct sockaddr_in*)ifa->ifa_addr)->sin_addr, buf,
+                INET_ADDRSTRLEN);
+      break;
+    }
+  }
+
+  if (head != nullptr)
+    freeifaddrs(head);
+
+  return std::string(buf);
+}
+
 int main(int argc, char** argv) {
   char* dbpath = nullptr;
   std::string options_path;
-  std::string hostname = "localhost";
+  std::string hostname = GetIP();
   std::string port = "0";
   std::string etcd_address = crocks::GetEtcdEndpoint();
   int num_threads = 2;
