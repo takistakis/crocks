@@ -141,26 +141,38 @@ Status ClusterImpl::Operation(const std::function<Status(Node*)>& op,
                               const std::string& key) {
   Node* node = NodeForKey(key);
   Status status = op(node);
-  while (status.IsUnavailable()) {
+  while (status.IsUnavailable() ||
+         (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT)) {
     Update();
     Node* new_node = NodeForKey(key);
-    if (new_node == node) {
-      int id = IndexForKey(key);
-      if (options_.inform_on_unavailable)
+    if ((new_node != node) ||
+        (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT)) {
+      node = new_node;
+      std::cerr << "Retrying" << std::endl;
+      status = op(NodeForKey(key));
+      continue;
+    }
+    int id = IndexForKey(key);
+    if (!info_.IsHealthy()) {
+      std::cerr << "Not healthy" << std::endl;
+    } else if (NodeForKey(key) == node) {
+      std::cerr << "Not healthy but etcd is not aware" << std::endl;
+      if (options_.inform_on_unavailable) {
+        std::cerr << "Informing etcd" << std::endl;
         info_.SetAvailable(id, false);
+      }
+    }
+    if (status.IsUnavailable()) {
       delete nodes_[id];
       nodes_[id] = nullptr;
-      if (!options_.wait_on_unhealthy)
-        return status;
-      std::cerr << "Node " << id << " is unavailable. Waiting..." << std::endl;
-      info_.WaitUntilHealthy();
-      std::cerr << "OK" << std::endl;
-      Update();
     }
-    status = op(NodeForKey(key));
-  }
-  while (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
+    if (!options_.wait_on_unhealthy)
+      return status;
+    std::cerr << "Waiting..." << std::endl;
+    info_.WaitUntilHealthy();
+    std::cerr << "OK" << std::endl;
     Update();
+    std::cerr << "Retrying" << std::endl;
     status = op(NodeForKey(key));
   }
   return status;
@@ -174,6 +186,7 @@ void ClusterImpl::Update() {
       delete nodes_[id];
       nodes_[id] = nullptr;
     } else if (nodes_[id] == nullptr) {
+      std::cerr << "New connection with node " << id << std::endl;
       nodes_[id] = new Node(address);
     } else {
       assert(nodes_[id]->address() == address);

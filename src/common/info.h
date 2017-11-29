@@ -142,6 +142,10 @@ class Info {
     etcd_.Unlock();
   }
 
+  bool IsHealthy() const {
+    return info_.IsHealthy();
+  }
+
   void WaitUntilHealthy();
 
  private:

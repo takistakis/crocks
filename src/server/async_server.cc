@@ -593,20 +593,6 @@ class MigrateCall final : public Call {
     int shard_id;
     std::shared_ptr<Shard> shard;
 
-    if (ctx_.IsCancelled() && status_ != FINISH) {
-      std::cerr << "Migrate request cancelled. Finishing." << std::endl;
-      stream_.Finish(grpc::Status::CANCELLED, &proceed);
-      status_ = FINISH;
-      auto metadata = ctx_.client_metadata();
-      auto pair = metadata.find("id");
-      assert(pair != metadata.end());
-      int node_id = std::stoi(pair->second.data());
-      std::cerr << data_->info->id() << ": Setting node " << node_id
-                << " as unavailable" << std::endl;
-      data_->info->SetAvailable(node_id, false);
-      return;
-    }
-
     switch (status_) {
       case REQUEST:
         if (!ok) {
@@ -669,38 +655,42 @@ class MigrateCall final : public Call {
 
       case DONE:
         stream_.Finish(grpc::Status::OK, &proceed);
-        data_->shards->Remove(request_.shard());
-        migrator_->ClearState();
         status_ = FINISH;
         break;
 
       case FINISH:
         finish_called_ = true;
-        if (on_done_called_) {
-          if (data_->shards->empty()) {
-            data_->info->Remove();
-            shutdown.store(true);
-          }
+        if (on_done_called_)
           delete this;
-        }
         break;
     }
   }
 
   void OnDone(bool ok) {
     assert(ok);
-    if (ctx_.IsCancelled())
-      std::cerr << data_->info->id() << ": Migrate call cancelled" << std::endl;
     on_done_called_ = true;
-    if (finish_called_) {
-      if (data_->shards->empty()) {
-        data_->info->Remove();
-        shutdown.store(true);
-      }
-      delete this;
+    if (ctx_.IsCancelled()) {
+      std::cerr << data_->info->id() << ": Migrate call cancelled" << std::endl;
+      auto metadata = ctx_.client_metadata();
+      auto pair = metadata.find("id");
+      assert(pair != metadata.end());
+      int node_id = std::stoi(pair->second.data());
+      std::cerr << data_->info->id() << ": Setting node " << node_id
+                << " as unavailable" << std::endl;
+      data_->info->SetAvailable(node_id, false);
     } else {
-      status_ = FINISH;
+      data_->shards->Remove(request_.shard());
+      if (migrator_)
+        migrator_->ClearState();
     }
+    if (data_->shards->empty()) {
+      data_->info->Remove();
+      shutdown.store(true);
+    }
+    if (finish_called_)
+      delete this;
+    else
+      status_ = FINISH;
   }
 
   std::function<void(bool)> proceed;
@@ -826,6 +816,10 @@ void AsyncServer::Init(const std::string& listening_address,
   // Create a thread that watches the "info" key and repeatedly
   // reads for updates. Gets cleaned up by the destructor.
   watcher_ = std::thread(&AsyncServer::WatchThread, this);
+  // At this point shards don't know if a migration is pending and some keys
+  // should be requested from another node. So we sleep for a while to let
+  // the watcher proceed with migrations before starting to serve requests.
+  std::this_thread::sleep_for(std::chrono::milliseconds(500));
   std::cerr << "Asynchronous server listening on port " << port << std::endl;
 }
 
