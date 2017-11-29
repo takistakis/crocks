@@ -35,7 +35,6 @@ inline void TestBatch(crocks::Cluster* db) {
 }
 
 int main() {
-  RandomInit();
   crocks::Cluster* db = crocks::DBOpen(crocks::GetEtcdEndpoint());
 
   for (int i = 0; i < 1000; i++) {

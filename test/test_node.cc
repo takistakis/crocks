@@ -56,7 +56,6 @@ inline void TestMultiPut(crocks::Node* db) {
 }
 
 int main() {
-  RandomInit();
   crocks::Node* db = new crocks::Node("localhost:50051");
 
   TestPut(db, "key", "value");

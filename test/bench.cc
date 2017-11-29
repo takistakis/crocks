@@ -26,10 +26,12 @@
 #include <functional>
 #include <iomanip>
 #include <iostream>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include <crocks/cluster.h>
@@ -61,15 +63,25 @@ const std::string usage_message(
     "Options:\n"
     "  -e, --etcd <address>  Etcd address [default: localhost:2379].\n"
     "  -s, --size <size>     Database size in GB [default: 1].\n"
+    "  -v, --value <size>    Value size in bytes [default: 4000].\n"
     "  -t, --threads <num>   Number of threads [default: 1].\n"
     "  -b, --batch <size>    Batch size in operations [default: 128].\n"
     "  -d, --duration <sec>  Benchmark duration in seconds [default: 10].\n"
     "  -h, --help            Show this help message and exit.\n");
 
-void Report(double iops) {
-  std::cout << round(iops) << " ops/sec ";
+void Report(double iops, int value_size, bool nl = true) {
+  std::cout << std::fixed << std::setprecision(0);
+  std::cout << round(iops) << "\t";
   std::cout << std::fixed << std::setprecision(2);
-  std::cout << "(" << iops * kKeyValueSize / kMB << " MB/sec)" << std::endl;
+  std::cout << iops * (kKeySize + value_size) / kMB;
+  if (nl)
+    std::cout << std::endl;
+}
+
+uint64_t NowMicros() {
+  struct timeval tv;
+  gettimeofday(&tv, nullptr);
+  return static_cast<uint64_t>(tv.tv_sec) * 1000000 + tv.tv_usec;
 }
 
 // Based on rocksdb::Duration defined in rocksdb/util/db_bench_tool.cc
@@ -108,12 +120,6 @@ class Duration {
   }
 
  private:
-  uint64_t NowMicros() {
-    struct timeval tv;
-    gettimeofday(&tv, nullptr);
-    return static_cast<uint64_t>(tv.tv_sec) * 1000000 + tv.tv_usec;
-  }
-
   uint64_t max_seconds_;
   int64_t max_ops_;
   int64_t ops_;
@@ -123,9 +129,9 @@ class Duration {
 
 // Repeatedly run the given function for max_seconds and
 // add the number of operations per second to *iops.
-void Run(std::function<void(crocks::Cluster*, KeyGenerator*, int)> func,
-         crocks::Cluster* db, KeyGenerator* gen, int max_seconds,
-         int batch_size, double* iops) {
+void Run(std::function<void(crocks::Cluster*, Generator*, int)> func,
+         crocks::Cluster* db, Generator* gen, int max_seconds, int batch_size,
+         double* iops) {
   assert(max_seconds > 0);
   Duration duration(max_seconds, 0);
   while (!duration.Done(batch_size))
@@ -136,44 +142,101 @@ void Run(std::function<void(crocks::Cluster*, KeyGenerator*, int)> func,
   }
 }
 
-void DoWrites(crocks::Cluster* db, KeyGenerator* gen, int batch_size) {
-  for (int i = 0; i < batch_size; i++)
-    EnsureRpc(db->Put(gen->Next(), RandomValue()));
+void Latency(crocks::Cluster* db, Generator* gen, int max_seconds,
+             int batch_size) {
+  Duration duration(max_seconds, 0);
+  std::map<int, int> map;
+  while (!duration.Done(batch_size)) {
+    for (int i = 0; i < batch_size; i++) {
+      auto start = NowMicros();
+      EnsureRpc(db->Put(gen->NextKey(), gen->NextValue()));
+      map[NowMicros() - start]++;
+    }
+  }
+  int all = 0;
+  for (const auto& pair : map)
+    all += pair.second;
+  assert(all > 0);
+  double last_perc = 0.0;
+  std::map<int, int>::iterator it = map.begin();
+  int min = it->first;
+  int max = it->first;
+  int ops = 0;
+  uint64_t sum = 0;
+  for (; it != map.end(); ++it) {
+    sum += it->first * it->second;
+    ops += it->second;
+    double perc = (double)ops / all;
+    if (last_perc < 0.50 && perc >= 0.50)
+      std::cout << "p50:\t" << it->first << std::endl;
+    else if (last_perc < 0.90 && perc >= 0.90)
+      std::cout << "p90:\t" << it->first << std::endl;
+    else if (last_perc < 0.95 && perc >= 0.95)
+      std::cout << "p95:\t" << it->first << std::endl;
+    else if (last_perc < 0.99 && perc >= 0.99)
+      std::cout << "p99:\t" << it->first << std::endl;
+    else if (last_perc < 0.999 && perc >= 0.999)
+      std::cout << "p999:\t" << it->first << std::endl;
+    else if (last_perc < 0.9999 && perc >= 0.9999)
+      std::cout << "p9999:\t" << it->first << std::endl;
+    else if (last_perc < 0.99999 && perc >= 0.99999)
+      std::cout << "p99999:\t" << it->first << std::endl;
+    last_perc = perc;
+    max = it->first;
+  }
+  std::cout << "min:\t" << min << std::endl;
+  std::cout << "max:\t" << max << std::endl;
+  double mean = (double)sum / all;
+  std::cout << "mean:\t" << mean << std::endl;
+  // uint64_t dev = 0.0;
+  // for (const auto& pair : map) {
+  //   int square = pow(pair.first - mean, 2);
+  //   dev += pair.second * square;
+  // }
+  // std::cout << std::fixed << std::setprecision(2);
+  // std::cout << "dev:\t" << sqrt(dev / all) << std::endl;
 }
 
-void DoBatchWrites(crocks::Cluster* db, KeyGenerator* gen, int batch_size) {
+void DoWrites(crocks::Cluster* db, Generator* gen, int batch_size) {
+  for (int i = 0; i < batch_size; i++)
+    EnsureRpc(db->Put(gen->NextKey(), gen->NextValue()));
+}
+
+void DoBatchWrites(crocks::Cluster* db, Generator* gen, int batch_size) {
   crocks::WriteBatch batch(db);
   for (int i = 0; i < batch_size; i++)
-    batch.Put(gen->Next(), RandomValue());
+    batch.Put(gen->NextKey(), gen->NextValue());
   EnsureRpc(batch.Write());
 }
 
-void DoReads(crocks::Cluster* db, KeyGenerator* gen, int batch_size) {
+void DoReads(crocks::Cluster* db, Generator* gen, int batch_size) {
   std::string value;
   for (int i = 0; i < batch_size; i++)
-    EnsureRpc(db->Get(gen->Next(), &value));
+    EnsureRpc(db->Get(gen->NextKey(), &value));
 }
 
-void Fill(crocks::Cluster* db, int num_keys) {
+void Fill(crocks::Cluster* db, int num_keys, int value_size) {
   Duration duration(0, num_keys);
-  KeyGenerator gen(SEQUENTIAL, 0);
+  Generator gen(SEQUENTIAL, 0, value_size);
   // 1MB per batch
-  int batch_size = kMB / kKeyValueSize;
+  int batch_size = kMB / (kKeySize + value_size);
   while (!duration.Done(batch_size))
     DoBatchWrites(db, &gen, batch_size);
 }
 
 int main(int argc, char** argv) {
   std::string etcd_address = crocks::GetEtcdEndpoint();
-  int size = 1;
+  int db_size = 1;
+  int value_size = 4000;
   int num_threads = 1;
   int batch_size = 128;
   int duration = 10;
-  const char* optstring = "e:s:t:b:d:h";
+  const char* optstring = "e:s:v:t:b:d:h";
   static struct option longopts[] = {
       // clang-format off
       {"etcd",     required_argument, 0, 'e'},
       {"size",     required_argument, 0, 's'},
+      {"value",    required_argument, 0, 'v'},
       {"threads",  required_argument, 0, 't'},
       {"batch",    required_argument, 0, 'b'},
       {"duration", required_argument, 0, 'd'},
@@ -189,7 +252,10 @@ int main(int argc, char** argv) {
         etcd_address = optarg;
         break;
       case 's':
-        size = std::stoi(optarg);
+        db_size = std::stoi(optarg);
+        break;
+      case 'v':
+        value_size = std::stoi(optarg);
         break;
       case 't':
         num_threads = std::stoi(optarg);
@@ -215,32 +281,26 @@ int main(int argc, char** argv) {
   }
 
   std::string command = argv[optind];
-  int num_keys = size * kGB / kKeyValueSize;
+  int num_keys = db_size * kGB / (kKeySize + value_size);
 
-  RandomInit();
   crocks::Cluster* db = crocks::DBOpen(etcd_address);
 
   if (command == "fill") {
-    std::cout << "Filling db with " << size << "GB" << std::endl;
-    double duration = Measure(Fill, db, num_keys);
-    Report(num_keys / duration);
+    std::cout << "Filling db with " << db_size << "GB" << std::endl;
+    double duration = Measure(Fill, db, num_keys, value_size);
+    std::cout << "IOPS\tMB/sec" << std::endl;
+    Report(num_keys / duration, value_size);
 
   } else if (command == "fillseq") {
-    std::cout << "Sequential writes" << std::endl;
-    KeyGenerator gen(SEQUENTIAL, 0);
+    Generator gen(SEQUENTIAL, 0, value_size);
     double iops = 0;
     Run(DoWrites, db, &gen, duration, batch_size, &iops);
-    Report(iops);
+    Report(iops, value_size);
 
   } else if (command == "fillrandom" || command == "fillbatch") {
-    std::cout << "Random writes";
-    if (command == "fillbatch") {
-      double mb = batch_size * kKeyValueSize / kMB;
-      std::cout << " in batches of " << batch_size << " (" << mb << " MB)";
-    }
-    std::cout << " from " << num_threads << " threads" << std::endl;
+    std::cout << num_threads << "\t";
     std::vector<std::thread> threads;
-    KeyGenerator gen(RANDOM, num_keys);
+    Generator gen(RANDOM, num_keys, value_size);
     double iops = 0;
     auto func = (command == "fillrandom") ? DoWrites : DoBatchWrites;
     for (int i = 0; i < num_threads; i++)
@@ -248,33 +308,31 @@ int main(int argc, char** argv) {
           [&] { Run(func, db, &gen, duration, batch_size, &iops); }));
     for (int i = 0; i < num_threads; i++)
       threads[i].join();
-    Report(iops);
+    Report(iops, value_size);
 
   } else if (command == "readseq") {
-    std::cout << "Sequential reads" << std::endl;
-    KeyGenerator gen(SEQUENTIAL, 0);
+    Generator gen(SEQUENTIAL, 0, value_size);
     double iops = 0;
     Run(DoReads, db, &gen, duration, batch_size, &iops);
-    Report(iops);
+    Report(iops, value_size);
 
   } else if (command == "readrandom") {
-    std::cout << "Random reads from " << num_threads << " threads" << std::endl;
+    std::cout << num_threads << "\t";
     std::vector<std::thread> threads;
-    KeyGenerator gen(RANDOM, num_keys);
+    Generator gen(RANDOM, num_keys, value_size);
     double iops = 0;
     for (int i = 0; i < num_threads; i++)
       threads.emplace_back(std::thread(
           [&] { Run(DoReads, db, &gen, duration, batch_size, &iops); }));
     for (int i = 0; i < num_threads; i++)
       threads[i].join();
-    Report(iops);
+    Report(iops, value_size);
 
   } else if (command == "readwhilewriting") {
-    std::cout << "Random reads and writes from " << num_threads
-              << " threads each" << std::endl;
+    std::cout << num_threads << "\t";
     std::vector<std::thread> write_threads;
     std::vector<std::thread> read_threads;
-    KeyGenerator gen(RANDOM, num_keys);
+    Generator gen(RANDOM, num_keys, value_size);
     double write_iops = 0;
     double read_iops = 0;
     for (int i = 0; i < num_threads; i++) {
@@ -287,10 +345,13 @@ int main(int argc, char** argv) {
       read_threads[i].join();
       write_threads[i].join();
     }
-    std::cout << "Reads:  ";
-    Report(read_iops);
-    std::cout << "Writes: ";
-    Report(write_iops);
+    Report(read_iops, value_size, false);
+    std::cout << "\t";
+    Report(write_iops, value_size);
+
+  } else if (command == "latency") {
+    Generator gen(RANDOM, num_keys, value_size);
+    Latency(db, &gen, duration, batch_size);
 
   } else {
     std::cerr << usage_message;

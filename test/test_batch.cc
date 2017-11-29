@@ -43,23 +43,22 @@ inline void TestSingle(crocks::Cluster* db) {
 inline void TestBatch(crocks::Cluster* db) {
   crocks::WriteBatch batch(db);
   std::cout << "Starting 1.500.000 batch puts" << std::endl;
-  KeyGenerator gen(SEQUENTIAL, 0);
+  Generator gen(SEQUENTIAL, 0, 4000);
   for (int i = 0; i < 1500000; i++)
-    batch.Put(gen.Next(), "yoyoyoyo" + std::to_string(i));
+    batch.Put(gen.NextKey(), "yoyoyoyo" + std::to_string(i));
   EnsureRpc(batch.Write());
 }
 
 inline void TestRandom(crocks::Cluster* db) {
   crocks::WriteBatch batch(db);
   std::cout << "Starting 1.500.000 random batch puts" << std::endl;
-  KeyGenerator gen(RANDOM, 1500000);
+  Generator gen(RANDOM, 1500000, 4000);
   for (int i = 0; i < 1500000; i++)
-    batch.Put(gen.Next(), RandomValue());
+    batch.Put(gen.NextKey(), gen.NextValue());
   EnsureRpc(batch.Write());
 }
 
 int main() {
-  RandomInit();
   crocks::Cluster* db = crocks::DBOpen(crocks::GetEtcdEndpoint());
 
   Measure(TestSingle, db);

@@ -26,45 +26,44 @@
 #include <type_traits>
 
 const int kKeySize = 16;
-const int kNumValues = 1024;
-const int kValueSize = 4000;
-const int kKeyValueSize = kKeySize + kValueSize;
-char values[kNumValues][kValueSize];
-
-inline void RandomInit() {
-  srand(time(nullptr));
-  for (int i = 0; i < kNumValues; i++)
-    std::generate_n(values[i], kValueSize, rand);
-}
-
-std::string RandomValue() {
-  return std::string(values[rand() % kNumValues], kValueSize);
-}
+const int kBlobSize = 1024 * 1024;
 
 enum WriteMode { RANDOM, SEQUENTIAL };
 
 // Based on rocksdb::Benchmark::KeyGenerator
 // defined in rocksdb/util/db_bench_tool.cc
-class KeyGenerator {
+class Generator {
  public:
-  KeyGenerator(WriteMode mode, int num) : mode_(mode), num_(num), next_(0) {}
+  Generator(WriteMode mode, int num_keys, int value_size)
+      : mode_(mode), num_keys_(num_keys), value_size_(value_size), next_(0) {
+    srand(time(nullptr));
+    std::generate_n(blob_, kBlobSize, rand);
+  }
 
-  std::string Next() {
+  std::string NextKey() {
     char key[kKeySize];
     switch (mode_) {
       case SEQUENTIAL:
         sprintf(key, "%015d", next_++);
         break;
       case RANDOM:
-        sprintf(key, "%015d", rand() % num_);
+        sprintf(key, "%015d", rand() % num_keys_);
         break;
     }
     return std::string(key);
   }
 
+  std::string NextValue() {
+    // Random index for blob_ small enough to not overflow
+    int start = rand() % (kBlobSize - value_size_);
+    return std::string(&blob_[start], value_size_);
+  }
+
  private:
+  char blob_[kBlobSize];
   WriteMode mode_;
-  const int num_;
+  int num_keys_;
+  int value_size_;
   int next_;
 };
 
