@@ -182,6 +182,22 @@ class GetCall final : public Call {
         break;
 
       case GET:
+        // If gRPC failed with status UNAVAILABLE, but the
+        // node is still in the info, he must have crashed.
+        if (force_get_status_.error_code() == grpc::StatusCode::UNAVAILABLE) {
+          auto addresses = data_->info->Addresses();
+          if (std::find(addresses.begin(), addresses.end(),
+                        shard_->old_address()) != addresses.end()) {
+            std::cerr << data_->info->id() << ": The former master crashed"
+                      << std::endl;
+            responder_.FinishWithError(
+                grpc::Status(grpc::StatusCode::UNAVAILABLE,
+                             "The former master has crashed"),
+                &proceed);
+            status_ = FINISH;
+            break;
+          }
+        }
         // If gRPC failed, the server must have shut down and if
         // RocksDB status is INVALID_ARGUMENT, he has deleted
         // the shard. Either way, we must have ingested by now.
