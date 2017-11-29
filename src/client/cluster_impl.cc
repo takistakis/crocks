@@ -19,7 +19,9 @@
 
 #include <assert.h>
 
+#include <chrono>
 #include <iostream>
+#include <thread>
 #include <utility>
 
 #include <grpc++/grpc++.h>
@@ -149,6 +151,7 @@ Status ClusterImpl::Operation(const std::function<Status(Node*)>& op,
         (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT)) {
       node = new_node;
       std::cerr << "Retrying" << std::endl;
+      std::this_thread::sleep_for(std::chrono::milliseconds(500));
       status = op(NodeForKey(key));
       continue;
     }
