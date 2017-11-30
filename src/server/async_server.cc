@@ -638,6 +638,9 @@ class MigrateCall final : public Call {
                     << request_.start_from() << std::endl;
         // From now on requests for the shard are rejected
         data_->info->GiveShard(shard_id);
+        // Inform the new node that he may proceed
+        stream_.Write(response, &proceed);
+        status_ = WRITE;
         migrator_ = std::unique_ptr<ShardMigrator>(
             new ShardMigrator(data_->db, shard_id, request_.start_from()));
         // DumpShard() creates SST files by iterating on the shard. We can't
@@ -653,10 +656,6 @@ class MigrateCall final : public Call {
         if (retval)
           shard->WaitRefs();
         migrator_->DumpShard(shard->cf());
-        retval = migrator_->ReadChunk(&response);
-        assert(retval);
-        stream_.Write(response, &proceed);
-        status_ = WRITE;
         break;
 
       case WRITE:
@@ -934,11 +933,13 @@ void AsyncServer::WatchThread() {
           continue;
         }
 
-        // The first read should be ok. Even if the shard is empty,
-        // one message will be sent. So if it is not ok, it means he
-        // crashed. We cannot know if he managed to give the shard.
+        // Once the old master gets the request, he is supposed to
+        // pass ownership to us by informing etcd and then send
+        // an empty response as a confirmation. We wait for these
+        // events in reverse order to avoid a deadlock, and start
+        // serving requests for that shard as soon as possible.
         if (!stream->Read(&response)) {
-          std::cerr << info_.id() << ": Error on first read" << std::endl;
+          std::cerr << info_.id() << ": Error on second read" << std::endl;
           grpc::Status status = stream->Finish();
           if (status.error_code() == grpc::StatusCode::INVALID_ARGUMENT) {
             std::cerr << "Migration was already finished but didn't manage to "
@@ -950,15 +951,21 @@ void AsyncServer::WatchThread() {
           }
           continue;
         }
-
-        // Once the old master gets the request, he is supposed to pass
-        // ownership to us by informing etcd. We wait for that, so that
-        // we can start serving requests for that shard immediately.
         while (info_.IndexForShard(shard_id) != info_.id()) {
           bool ret = info_.WatchNext(call_);
           assert(!ret);
         }
         // From now on requests for the shard are accepted
+
+        // The second read should be ok. Even if the shard is empty,
+        // one message will be sent. So if it is not ok, it means he
+        // crashed. We cannot know if he managed to give the shard.
+        if (!stream->Read(&response)) {
+          std::cerr << info_.id() << ": Error on second read" << std::endl;
+          grpc::Status status = stream->Finish();
+          HandleError(status, node_id);
+          continue;
+        }
 
         do {
           if (response.finished())
