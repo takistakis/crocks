@@ -46,6 +46,21 @@ const double kGB = kMB * 1024;
 
 std::mutex mutex;
 
+void Ensure(const crocks::Status& status) {
+  if (status.ok())
+    return;
+  if (!status.grpc_ok()) {
+    std::cerr << "RPC failed with status " << status.grpc_code() << " ("
+              << status.error_message() << ")" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+  if (!status.rocksdb_ok()) {
+    std::cerr << "RocksDB failed with status " << status.rocksdb_code() << " ("
+              << status.error_message() << ")" << std::endl;
+    exit(EXIT_FAILURE);
+  }
+}
+
 const std::string usage_message(
     "Usage: bench [options] command [args]...\n"
     "\n"
@@ -149,7 +164,7 @@ void Latency(crocks::Cluster* db, Generator* gen, int max_seconds,
   while (!duration.Done(batch_size)) {
     for (int i = 0; i < batch_size; i++) {
       auto start = NowMicros();
-      EnsureRpc(db->Put(gen->NextKey(), gen->NextValue()));
+      Ensure(db->Put(gen->NextKey(), gen->NextValue()));
       map[NowMicros() - start]++;
     }
   }
@@ -199,20 +214,20 @@ void Latency(crocks::Cluster* db, Generator* gen, int max_seconds,
 
 void DoWrites(crocks::Cluster* db, Generator* gen, int batch_size) {
   for (int i = 0; i < batch_size; i++)
-    EnsureRpc(db->Put(gen->NextKey(), gen->NextValue()));
+    Ensure(db->Put(gen->NextKey(), gen->NextValue()));
 }
 
 void DoBatchWrites(crocks::Cluster* db, Generator* gen, int batch_size) {
   crocks::WriteBatch batch(db);
   for (int i = 0; i < batch_size; i++)
     batch.Put(gen->NextKey(), gen->NextValue());
-  EnsureRpc(batch.Write());
+  Ensure(batch.Write());
 }
 
 void DoReads(crocks::Cluster* db, Generator* gen, int batch_size) {
   std::string value;
   for (int i = 0; i < batch_size; i++)
-    EnsureRpc(db->Get(gen->NextKey(), &value));
+    Ensure(db->Get(gen->NextKey(), &value));
 }
 
 void Fill(crocks::Cluster* db, int num_keys, int value_size) {
