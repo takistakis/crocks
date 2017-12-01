@@ -52,7 +52,8 @@ class AsyncServer final {
 
   // Start listening for incoming client connections, announce server to
   // etcd, open RocksDB database, and start watching etcd for changes
-  void Init(const std::string& listening_address, const std::string& hostname);
+  void Init(const std::string& listening_address, const std::string& hostname,
+            int num_shards);
 
   void Run();
 

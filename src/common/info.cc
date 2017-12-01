@@ -71,7 +71,7 @@ void Info::Get() {
   Parse(info);
 }
 
-void Info::Add(const std::string& address) {
+void Info::Add(const std::string& address, int num_shards) {
   bool succeeded;
   do {
     std::string old_info;
@@ -89,7 +89,7 @@ void Info::Add(const std::string& address) {
         info_.SetAvailable(id, true);
         id_ = id;
       } else if (info_.IsInit()) {
-        id_ = info_.AddNodeWithNewShards(address);
+        id_ = info_.AddNodeWithNewShards(address, num_shards);
       } else if (info_.IsRunning()) {
         id_ = info_.AddNode(address);
       } else if (info_.IsMigrating()) {
@@ -99,7 +99,7 @@ void Info::Add(const std::string& address) {
       succeeded =
           etcd_.TxnPutIfValueEquals(kInfoKey, info_.Serialize(), old_info);
     } else {
-      id_ = info_.AddNodeWithNewShards(address);
+      id_ = info_.AddNodeWithNewShards(address, num_shards);
       succeeded = etcd_.TxnPutIfKeyMissing(kInfoKey, info_.Serialize());
     }
   } while (!succeeded);

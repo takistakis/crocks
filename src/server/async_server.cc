@@ -766,7 +766,7 @@ AsyncServer::~AsyncServer() {
 }
 
 void AsyncServer::Init(const std::string& listening_address,
-                       const std::string& hostname) {
+                       const std::string& hostname, int num_shards) {
   // Initialize gRPC
   grpc::ServerBuilder builder;
   int selected_port;
@@ -787,7 +787,7 @@ void AsyncServer::Init(const std::string& listening_address,
   std::string node_address = hostname + ":" + port;
   // TODO: This knows if we are resuming. We could return a relevant
   // bool, and if resuming check that we have the right column families.
-  info_.Add(node_address);
+  info_.Add(node_address, num_shards);
 
   // Open RocksDB database
   std::vector<std::string> column_families;

@@ -31,15 +31,16 @@ int InfoWrapper::AddNode(const std::string& address) {
   return id;
 }
 
-int InfoWrapper::AddNodeWithNewShards(const std::string& address) {
+int InfoWrapper::AddNodeWithNewShards(const std::string& address,
+                                      int num_shards) {
   write_lock lock(mutex_);
   int id = info_.nodes_size();
   pb::NodeInfo* node = info_.add_nodes();
   node->set_address(address);
   node->set_id(id);
-  node->set_num_shards(kShardsPerNode);
+  node->set_num_shards(num_shards);
   node->set_available(true);
-  for (int i = 0; i < kShardsPerNode; i++) {
+  for (int i = 0; i < num_shards; i++) {
     pb::ShardInfo* shard = info_.add_shards();
     shard->set_master(id);
   }

@@ -43,6 +43,7 @@ const std::string usage_message(
     "  -P, --port <port>      Listening port [default: chosen by OS].\n"
     "  -e, --etcd <address>   Etcd address [default: localhost:2379].\n"
     "  -t, --threads <int>    Number of serving threads [default: 2].\n"
+    "  -s, --shards <int>     Number of initial shards [default: 10].\n"
     "  -d, --daemon           Daemonize process.\n"
     "  -v, --version          Show version and exit.\n"
     "  -h, --help             Show this help message and exit.\n");
@@ -76,8 +77,9 @@ int main(int argc, char** argv) {
   std::string port = "0";
   std::string etcd_address = crocks::GetEtcdEndpoint();
   int num_threads = 2;
+  int num_shards = 10;
 
-  const char* optstring = "p:o:H:P:e:t:dvh";
+  const char* optstring = "p:o:H:P:e:t:s:dvh";
   static struct option longopts[] = {
       // clang-format off
       {"path",    required_argument, 0, 'p'},
@@ -86,6 +88,7 @@ int main(int argc, char** argv) {
       {"port",    required_argument, 0, 'P'},
       {"etcd",    required_argument, 0, 'e'},
       {"threads", required_argument, 0, 't'},
+      {"shards",  required_argument, 0, 's'},
       {"daemon",  no_argument,       0, 'd'},
       {"version", no_argument,       0, 'v'},
       {"help",    no_argument,       0, 'h'},
@@ -114,6 +117,9 @@ int main(int argc, char** argv) {
         break;
       case 't':
         num_threads = std::stoi(optarg);
+        break;
+      case 's':
+        num_shards = std::stoi(optarg);
         break;
       case 'd':
         if (daemon(0, 0) < 0) {
@@ -146,7 +152,7 @@ int main(int argc, char** argv) {
 
   // Start server
   crocks::AsyncServer server(etcd_address, dbpath, options_path, num_threads);
-  server.Init(listening_address, hostname);
+  server.Init(listening_address, hostname, num_shards);
   server.Run();
 
   return 0;

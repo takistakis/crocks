@@ -85,7 +85,7 @@ class Info {
 
   // Add a node with the given address and send the updated cluster
   // info to etcd, repeating the transaction until succeeded.
-  void Add(const std::string& address);
+  void Add(const std::string& address, int num_shards);
 
   void Remove(int id);
 

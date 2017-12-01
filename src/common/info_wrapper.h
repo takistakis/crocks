@@ -30,8 +30,6 @@
 #include "gen/info.pb.h"
 #include "src/common/lock.h"
 
-const int kShardsPerNode = 10;
-
 namespace crocks {
 
 class InfoWrapper {
@@ -173,7 +171,7 @@ class InfoWrapper {
 
   int AddNode(const std::string& address);
 
-  int AddNodeWithNewShards(const std::string& address);
+  int AddNodeWithNewShards(const std::string& address, int num_shards);
 
   void MarkRemoveNode(int id);
 
