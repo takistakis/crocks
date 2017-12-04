@@ -204,13 +204,16 @@ rocksdb::Options DefaultRocksdbOptions() {
       std::max(std::thread::hardware_concurrency(), 2U));
   options.OptimizeLevelStyleCompaction();
   options.compaction_pri = rocksdb::kMinOverlappingRatio;
-  options.max_total_wal_size = 100 << 20;
-  options.write_buffer_size = 16 << 20;
-  options.db_write_buffer_size = GetTotalSystemMemory() / 4;
+  // options.max_total_wal_size = 100 << 20;
+  options.write_buffer_size = 64 << 20;
+  // options.db_write_buffer_size = GetTotalSystemMemory() / 4;
   options.allow_ingest_behind = true;
-  options.level0_slowdown_writes_trigger = 8;
-  options.level0_stop_writes_trigger = 10;
+  options.level0_slowdown_writes_trigger = 10;
+  options.level0_stop_writes_trigger = 15;
   options.listeners.push_back(std::make_shared<Listener>());
+  options.optimize_filters_for_hits = true;
+  options.wal_bytes_per_sync = 512 << 10;
+  options.bytes_per_sync = 512 << 10;
   return options;
 }
 
