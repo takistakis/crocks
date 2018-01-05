@@ -34,10 +34,6 @@ namespace crocks {
 class Cluster;
 class ClusterImpl;
 
-// TODO: Make thresholds configurable
-const int kByteSizeThreshold1 = 64 * 1024;    // 64KB
-const int kByteSizeThreshold2 = 1024 * 1024;  // 1MB
-
 struct AsyncBatchCall {
   pb::Response response;
   grpc::ClientContext context;
@@ -129,7 +125,7 @@ class Buffer {
 
 class WriteBatch::WriteBatchImpl {
  public:
-  WriteBatchImpl(Cluster* db);
+  WriteBatchImpl(Cluster* db, int threshold_low, int threshold_high);
   ~WriteBatchImpl();
 
   void Put(const std::string& key, const std::string& value);
@@ -154,6 +150,8 @@ class WriteBatch::WriteBatchImpl {
   grpc::CompletionQueue cq_;
   std::unordered_map<int, AsyncBatchCall*> calls_;
   std::vector<Buffer*> buffers_;
+  int threshold_low_;
+  int threshold_high_;
 };
 
 }  // namespace crocks

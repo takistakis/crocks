@@ -39,6 +39,7 @@ namespace crocks {
 class WriteBatch {
  public:
   explicit WriteBatch(Cluster* db);
+  explicit WriteBatch(Cluster* db, int threshold_low, int threshold_high);
   ~WriteBatch();
 
   // Batch operations get inserted in a per-node buffer. Once the buffer exceeds

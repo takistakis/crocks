@@ -33,7 +33,11 @@
 namespace crocks {
 
 // WriteBatchImpl wrapper
-WriteBatch::WriteBatch(Cluster* db) : impl_(new WriteBatchImpl(db)) {}
+WriteBatch::WriteBatch(Cluster* db)
+    : impl_(new WriteBatchImpl(db, 64 * 1024, 1024 * 1024)) {}
+
+WriteBatch::WriteBatch(Cluster* db, int threshold_low, int threshold_high)
+    : impl_(new WriteBatchImpl(db, threshold_low, threshold_high)) {}
 
 WriteBatch::~WriteBatch() {
   delete impl_;
@@ -144,10 +148,13 @@ void Buffer::RequestRead() {
 }
 
 // Write batch implementation
-WriteBatch::WriteBatchImpl::WriteBatchImpl(Cluster* db)
+WriteBatch::WriteBatchImpl::WriteBatchImpl(Cluster* db, int threshold_low,
+                                           int threshold_high)
     : db_(db->get()),
       // Fill buffer_ vector with db_->num_shards() nullptrs
-      buffers_(db_->num_shards()) {}
+      buffers_(db_->num_shards()),
+      threshold_low_(threshold_low),
+      threshold_high_(threshold_high) {}
 
 WriteBatch::WriteBatchImpl::~WriteBatchImpl() {
   // Some items may be empty but deleting nullptr is ok
@@ -287,10 +294,10 @@ void WriteBatch::WriteBatchImpl::StreamIfExceededThreshold(int shard) {
     call = EnsureBatchCall(node_id);
     buffer->set_call(call);
   }
-  if (buffer->ByteSize() <= kByteSizeThreshold1) {
+  if (buffer->ByteSize() <= threshold_low_) {
     // Below the low threshold. Do nothing.
     return;
-  } else if (buffer->ByteSize() <= kByteSizeThreshold2) {
+  } else if (buffer->ByteSize() <= threshold_high_) {
     // Above the low threshold. If there are pending requests even after
     // checking the queue, continue and try again later, else send a buffer.
     while (call->pending_requests > 0 && QueueAsyncNext())

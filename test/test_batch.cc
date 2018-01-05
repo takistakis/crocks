@@ -41,21 +41,27 @@ inline void TestSingle(crocks::Cluster* db) {
 }
 
 inline void TestBatch(crocks::Cluster* db) {
-  crocks::WriteBatch batch(db);
-  std::cout << "Starting 1.500.000 batch puts" << std::endl;
-  Generator gen(SEQUENTIAL, 0, 4000);
-  for (int i = 0; i < 1500000; i++)
-    batch.Put(gen.NextKey(), "yoyoyoyo" + std::to_string(i));
-  EnsureRpc(batch.Write());
+  std::cout << "Starting 1.000.000 sequential batch puts" << std::endl;
+  Generator gen(SEQUENTIAL, 0, 800);
+  for (int j = 0; j < 10; j++) {
+    crocks::WriteBatch batch(db);
+    for (int i = 0; i < 100000; i++)
+      batch.Put(gen.NextKey(), gen.NextValue());
+    EnsureRpc(batch.Write());
+    std::cout << j << " done" << std::endl;
+  }
 }
 
 inline void TestRandom(crocks::Cluster* db) {
-  crocks::WriteBatch batch(db);
-  std::cout << "Starting 1.500.000 random batch puts" << std::endl;
-  Generator gen(RANDOM, 1500000, 4000);
-  for (int i = 0; i < 1500000; i++)
-    batch.Put(gen.NextKey(), gen.NextValue());
-  EnsureRpc(batch.Write());
+  std::cout << "Starting 1.000.000 random batch puts" << std::endl;
+  Generator gen(RANDOM, 1000000, 800);
+  for (int j = 0; j < 10; j++) {
+    crocks::WriteBatch batch(db);
+    for (int i = 0; i < 100000; i++)
+      batch.Put(gen.NextKey(), gen.NextValue());
+    EnsureRpc(batch.Write());
+    std::cout << j << " done" << std::endl;
+  }
 }
 
 int main() {
