@@ -21,6 +21,17 @@
 
 namespace crocks {
 
+bool InfoWrapper::IsHealthy() const {
+  read_lock lock(mutex_);
+  for (const auto& node : info_.nodes()) {
+    if (node.num_shards() == 0)
+      continue;
+    if (!node.available())
+      return false;
+  }
+  return true;
+}
+
 int InfoWrapper::AddNode(const std::string& address) {
   write_lock lock(mutex_);
   int id = info_.nodes_size();

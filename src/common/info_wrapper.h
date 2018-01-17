@@ -151,13 +151,7 @@ class InfoWrapper {
     return info_.nodes(id).available();
   }
 
-  bool IsHealthy() const {
-    read_lock lock(mutex_);
-    for (const auto& node : info_.nodes())
-      if (!node.available())
-        return false;
-    return true;
-  }
+  bool IsHealthy() const;
 
   void SetRunning() {
     write_lock lock(mutex_);
