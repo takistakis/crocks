@@ -55,6 +55,11 @@ class Shard {
     importing_.store(value);
   }
 
+  void set_largest_key(const std::string& largest_key) {
+    write_lock lock(largest_key_mutex_);
+    largest_key_ = largest_key;
+  }
+
   std::string old_address() const {
     return old_address_;
   }

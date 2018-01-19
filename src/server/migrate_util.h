@@ -33,6 +33,7 @@ namespace pb {
 class MigrateResponse;
 }
 
+std::string Key(int shard, const std::string& key);
 std::string Filename(const std::string& path, int shard, int num);
 
 class ShardMigrator {

@@ -828,13 +828,25 @@ void AsyncServer::Init(const std::string& listening_address,
 
   // Watch etcd for changes to the cluster
   call_ = info_.Watch();
+
+  // Set existing shards that are not yet imported as importing
+  for (const auto& task : info_.Tasks()) {
+    for (int shard_id : task.second) {
+      Shard* shard = shards_->at(shard_id).get();
+      if (shard) {
+        shard->set_importing(true);
+        std::string key = Key(shard_id, "largest_key");
+        std::string value;
+        rocksdb::Status s = db_->Get(rocksdb::ReadOptions(), key, &value);
+        if (s.ok())
+          shard->set_largest_key(value);
+      }
+    }
+  }
+
   // Create a thread that watches the "info" key and repeatedly
   // reads for updates. Gets cleaned up by the destructor.
   watcher_ = std::thread(&AsyncServer::WatchThread, this);
-  // At this point shards don't know if a migration is pending and some keys
-  // should be requested from another node. So we sleep for a while to let
-  // the watcher proceed with migrations before starting to serve requests.
-  std::this_thread::sleep_for(std::chrono::milliseconds(500));
   std::cerr << "Asynchronous server listening on port " << port << std::endl;
 }
 
