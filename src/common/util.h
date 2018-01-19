@@ -26,7 +26,8 @@
 namespace crocks {
 
 // Make RPC and if it fails with status UNAVAILABLE, retry once
-grpc::Status Ensure(std::function<grpc::Status(grpc::ClientContext*)> rpc);
+grpc::Status Ensure(std::function<grpc::Status(grpc::ClientContext*)> rpc,
+                    const std::string& what);
 
 // Get environment variable, and return whether it was set
 bool GetEnv(const char* name, std::string* value);

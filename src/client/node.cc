@@ -40,9 +40,11 @@ Status Node::Get(const std::string& key, std::string* value) {
   pb::Key request;
   pb::Response response;
   request.set_key(key);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return stub_->Get(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return stub_->Get(ctx, request, &response);
+      },
+      "Node::Get");
   // If status is not OK, value is an empty string
   *value = response.value();
   return Status(status, response.status());
@@ -53,9 +55,11 @@ Status Node::Put(const std::string& key, const std::string& value) {
   pb::Response response;
   request.set_key(key);
   request.set_value(value);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return stub_->Put(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return stub_->Put(ctx, request, &response);
+      },
+      "Node::Put");
   return Status(status, response.status());
 }
 
@@ -63,9 +67,11 @@ Status Node::Delete(const std::string& key) {
   pb::Key request;
   pb::Response response;
   request.set_key(key);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return stub_->Delete(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return stub_->Delete(ctx, request, &response);
+      },
+      "Node::Delete");
   return Status(status, response.status());
 }
 
@@ -73,9 +79,11 @@ Status Node::SingleDelete(const std::string& key) {
   pb::Key request;
   pb::Response response;
   request.set_key(key);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return stub_->SingleDelete(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return stub_->SingleDelete(ctx, request, &response);
+      },
+      "Node::SingleDelete");
   return Status(status, response.status());
 }
 
@@ -84,9 +92,11 @@ Status Node::Merge(const std::string& key, const std::string& value) {
   pb::Response response;
   request.set_key(key);
   request.set_value(value);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return stub_->Merge(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return stub_->Merge(ctx, request, &response);
+      },
+      "Node::Merge");
   return Status(status, response.status());
 }
 

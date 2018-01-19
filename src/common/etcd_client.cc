@@ -37,9 +37,11 @@ int EtcdClient::Get(const std::string& key, std::string* value) {
   etcdserverpb::RangeRequest request;
   etcdserverpb::RangeResponse response;
   request.set_key(key);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return kv_stub_->Range(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return kv_stub_->Range(ctx, request, &response);
+      },
+      "EtcdClient::Get");
   EnsureRpc(status);
   if (response.count() == 0)
     return 0;
@@ -53,9 +55,11 @@ void EtcdClient::Put(const std::string& key, const std::string& value) {
   etcdserverpb::PutResponse response;
   request.set_key(key);
   request.set_value(value);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return kv_stub_->Put(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return kv_stub_->Put(ctx, request, &response);
+      },
+      "EtcdClient::Put");
   EnsureRpc(status);
 }
 
@@ -63,9 +67,11 @@ int EtcdClient::Delete(const std::string& key) {
   etcdserverpb::DeleteRangeRequest request;
   etcdserverpb::DeleteRangeResponse response;
   request.set_key(key);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return kv_stub_->DeleteRange(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return kv_stub_->DeleteRange(ctx, request, &response);
+      },
+      "EtcdClient::Delete");
   EnsureRpc(status);
   return response.deleted();
 }
@@ -74,9 +80,11 @@ bool EtcdClient::KeyMissing(const std::string& key) {
   etcdserverpb::RangeRequest request;
   etcdserverpb::RangeResponse response;
   request.set_key(key);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return kv_stub_->Range(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return kv_stub_->Range(ctx, request, &response);
+      },
+      "EtcdClient::KeyMissing");
   EnsureRpc(status);
   return response.count() == 0;
 }
@@ -88,9 +96,11 @@ bool EtcdClient::TxnPutIfValueEquals(const std::string& key,
   etcdserverpb::TxnResponse response;
   AddCompareValueEquals(key, old_value, &request);
   AddSuccessPut(key, value, &request);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return kv_stub_->Txn(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return kv_stub_->Txn(ctx, request, &response);
+      },
+      "EtcdClient::TxnPutIfValueEquals");
   EnsureRpc(status);
   return response.succeeded();
 }
@@ -101,9 +111,11 @@ bool EtcdClient::TxnPutIfKeyMissing(const std::string& key,
   etcdserverpb::TxnResponse response;
   AddCompareKeyMissing(key, &request);
   AddSuccessPut(key, value, &request);
-  grpc::Status status = Ensure([&](grpc::ClientContext* ctx) {
-    return kv_stub_->Txn(ctx, request, &response);
-  });
+  grpc::Status status = Ensure(
+      [&](grpc::ClientContext* ctx) {
+        return kv_stub_->Txn(ctx, request, &response);
+      },
+      "EtcdClient::TxnPutIfKeyMissing");
   EnsureRpc(status);
   return response.succeeded();
 }
