@@ -113,10 +113,6 @@ void Health(const std::string& address) {
     std::string address = info.Address(i);
     if (address.empty())
       continue;
-    if (!info.IsAvailable(i)) {
-      std::cout << address << ": DOWN" << std::endl;
-      continue;
-    }
     crocks::Node* node = new crocks::Node(address);
     crocks::Status status = node->Ping();
     delete node;
@@ -124,6 +120,7 @@ void Health(const std::string& address) {
       info.SetAvailable(i, false);
       std::cout << address << ": DOWN" << std::endl;
     } else {
+      info.SetAvailable(i, true);
       std::cout << address << ": OK" << std::endl;
     }
   }
