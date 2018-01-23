@@ -26,13 +26,22 @@ namespace crocks {
 
 grpc::Status Ensure(std::function<grpc::Status(grpc::ClientContext*)> rpc,
                     const std::string& what) {
+  std::chrono::system_clock::time_point deadline =
+      std::chrono::system_clock::now() + std::chrono::seconds(1);
   grpc::ClientContext context;
+  context.set_deadline(deadline);
   grpc::Status status = rpc(&context);
+  int tries = 0;
+  while (status.error_code() == grpc::StatusCode::DEADLINE_EXCEEDED) {
+    grpc::ClientContext retry_context;
+    retry_context.set_deadline(deadline);
+    status = rpc(&retry_context);
+    if (tries++ == 10)
+      status = grpc::Status(grpc::StatusCode::UNAVAILABLE, "Deadline exceeded");
+  }
   if (status.error_code() == grpc::StatusCode::UNAVAILABLE) {
     std::cerr << what << " failed. Retrying..." << std::endl;
     grpc::ClientContext retry_context;
-    std::chrono::system_clock::time_point deadline =
-        std::chrono::system_clock::now() + std::chrono::milliseconds(500);
     retry_context.set_deadline(deadline);
     grpc::Status retry_status = rpc(&retry_context);
     if (retry_status.error_code() != grpc::StatusCode::DEADLINE_EXCEEDED)

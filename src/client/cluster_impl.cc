@@ -141,42 +141,88 @@ Node* ClusterImpl::NodeByIndex(int idx) {
 
 Status ClusterImpl::Operation(const std::function<Status(Node*)>& op,
                               const std::string& key) {
-  Node* node = NodeForKey(key);
-  Status status = op(node);
+  Status status = op(NodeForKey(key));
   while (status.IsUnavailable() ||
          (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT)) {
-    Update();
-    Node* new_node = NodeForKey(key);
-    if ((new_node != node) ||
-        (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT)) {
-      node = new_node;
-      std::cerr << "Retrying" << std::endl;
-      std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    int id = IndexForKey(key);
+    if (status.grpc_code() == grpc::StatusCode::INVALID_ARGUMENT) {
+      std::cerr << "Got status INVALID_ARGUMENT from node " << id << std::endl;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+      Update();
+      std::cerr << "Retrying with the new master (node " << IndexForKey(key)
+                << ")... ";
       status = op(NodeForKey(key));
+      std::cerr << "OK (status " << status.grpc_code() << ": "
+                << status.error_message() << ")" << std::endl;
       continue;
     }
-    int id = IndexForKey(key);
-    if (!info_.IsHealthy()) {
-      std::cerr << "Not healthy" << std::endl;
-    } else if (NodeForKey(key) == node) {
-      std::cerr << "Not healthy but etcd is not aware" << std::endl;
-      if (options_.inform_on_unavailable) {
-        std::cerr << "Informing etcd" << std::endl;
-        info_.SetAvailable(id, false);
-      }
-    }
-    if (status.IsUnavailable()) {
+
+    // We got status UNAVAILABLE. There are three possibilities:
+    //   1. The node has shut down cleanly
+    //   2. The node crashed but is back up and we need to reconnect
+    //   3. The node crashed and we need to wait for recovery
+    // In any case we close the current connection
+    std::cerr << "Got status UNAVAILABLE from node " << id << std::endl;
+
+    if (status.error_message() == "The former master has crashed") {
+      std::cerr << "The former master has crashed" << std::endl;
+    } else {
       delete nodes_[id];
       nodes_[id] = nullptr;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+      Update();
+      if (IndexForKey(key) != id) {
+        // Case 1. Retry with the new master
+        std::cerr << "He has shut down. Retrying with the new master (node "
+                  << IndexForKey(key) << ")... ";
+        status = op(NodeForKey(key));
+        std::cerr << "OK" << std::endl;
+        continue;
+      }
+      std::cerr << "Pinging node " << id << "..." << std::endl;
+      assert(IndexForKey(key) == id);
+      Status ping_status = NodeForKey(key)->Ping();
+      if (ping_status.grpc_code() == grpc::StatusCode::OK) {
+        // Case 2. Do nothing, we'll just retry
+        std::cerr << "He is back online" << std::endl;
+      } else {
+        // Case 3. Wait until the cluster is healthy again
+        // FIXME: It crashed once, cannot reproduce
+        if (!ping_status.IsUnavailable())
+          EnsureRpc(ping_status);
+        while (info_.IsHealthy() &&
+               (ping_status.grpc_code() != grpc::StatusCode::OK)) {
+          id = IndexForKey(key);
+          std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+          delete nodes_[id];
+          nodes_[id] = nullptr;
+          Update();
+          ping_status = NodeForKey(key)->Ping();
+          std::cerr << "He has crashed but etcd is not aware" << std::endl;
+          if (options_.inform_on_unavailable) {
+            std::cerr << "Informing etcd" << std::endl;
+            info_.SetAvailable(id, false);
+          }
+        }
+      }
     }
-    if (!options_.wait_on_unhealthy)
-      return status;
-    std::cerr << "Waiting..." << std::endl;
-    info_.WaitUntilHealthy();
-    std::cerr << "OK" << std::endl;
-    Update();
-    std::cerr << "Retrying" << std::endl;
+
+    if (!info_.IsHealthy()) {
+      id = IndexForKey(key);
+      if (!options_.wait_on_unhealthy)
+        return status;
+      std::cerr << "Cluster is unhealthy. Waiting... ";
+      info_.WaitUntilHealthy();
+      std::cerr << "OK" << std::endl;
+      delete nodes_[id];
+      nodes_[id] = nullptr;
+      Update();
+    }
+
+    std::cerr << "Retrying with node " << IndexForKey(key) << "...";
     status = op(NodeForKey(key));
+    std::cerr << "OK (status " << status.grpc_code() << ": "
+              << status.error_message() << ")" << std::endl;
   }
   return status;
 }
