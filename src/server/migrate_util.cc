@@ -247,7 +247,9 @@ void ShardImporter::SaveState() {
   batch.Put(Key(shard_, "next_num"), std::to_string(num_));
   batch.Put(Key(shard_, "largest_key"), largest_key_);
   batch.Put(Key(shard_, "filename"), filename_);
-  rocksdb::Status s = db_->Write(rocksdb::WriteOptions(), &batch);
+  rocksdb::WriteOptions options;
+  options.sync = true;
+  rocksdb::Status s = db_->Write(options, &batch);
   EnsureRocksdb("Write(importer_state)", s);
 }
 

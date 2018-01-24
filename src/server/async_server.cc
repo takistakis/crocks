@@ -987,7 +987,6 @@ void AsyncServer::WatchThread() {
             shard->Ingest(importer.filename(), importer.largest_key());
         } while (stream->Read(&response));
 
-        shard->set_importing(false);
         stream->Write(request);
         grpc::Status status = stream->Finish();
         if (!status.ok()) {
@@ -997,6 +996,7 @@ void AsyncServer::WatchThread() {
         }
 
         MigrationOver(importer, shard_id);
+        shard->set_importing(false);
         std::cerr << info_.id() << ": Imported shard " << shard_id << std::endl;
       }
     }
