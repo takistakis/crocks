@@ -864,6 +864,7 @@ void AsyncServer::Run() {
   }
   CallData migrate_data{&service_, migrate_cq_.get(), db_, &info_, shards_};
   new MigrateCall(&migrate_data);
+  info_.SetAvailable(info_.id(), true);
   void* tag;
   bool ok;
   // For the meaning of the return value of Next, and ok see:

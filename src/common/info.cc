@@ -86,7 +86,6 @@ void Info::Add(const std::string& address, int num_shards) {
                     << "run \"crocksctl health\" first" << std::endl;
           exit(EXIT_FAILURE);
         }
-        info_.SetAvailable(id, true);
         id_ = id;
       } else if (info_.IsInit()) {
         id_ = info_.AddNodeWithNewShards(address, num_shards);
