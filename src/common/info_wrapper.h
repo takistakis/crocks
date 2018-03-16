@@ -173,7 +173,7 @@ class InfoWrapper {
 
   void RedistributeShards();
 
-  std::unordered_map<int, std::vector<int>> Tasks(int id) const;
+  std::pair<int, int> Task(int id) const;
 
   void GiveShard(int id, int shard);
 

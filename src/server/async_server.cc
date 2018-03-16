@@ -611,6 +611,7 @@ class MigrateCall final : public Call {
 
     switch (status_) {
       case REQUEST:
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
         if (!ok) {
           delete this;
           break;
@@ -894,10 +895,16 @@ void AsyncServer::ServeThread(int i) {
 
 void AsyncServer::WatchThread() {
   do {
-    for (const auto& task : info_.Tasks()) {
-      int node_id = task.first;
-      std::string address = info_.Address(node_id);
-      for (int shard_id : task.second) {
+    const std::pair<int, int> task = info_.Task();
+    if (task.first == -1)
+      continue;
+    // TODO: Delete the excess curly brackets. We
+    // temporarily keep the indentation for easy rebasing.
+    {
+      {
+        int node_id = task.first;
+        int shard_id = task.second;
+        std::string address = info_.Address(node_id);
         if (!info_.IsAvailable(node_id)) {
           std::cerr << info_.id() << ": Node " << node_id
                     << " is unavailable. Skipping request for shard "
@@ -996,23 +1003,19 @@ void AsyncServer::WatchThread() {
           continue;
         }
 
+        std::cerr << info_.id() << ": Imported shard " << shard_id << std::endl;
         MigrationOver(importer, shard_id);
         shard->set_importing(false);
-        std::cerr << info_.id() << ": Imported shard " << shard_id << std::endl;
       }
     }
   } while (!info_.WatchNext(call_));
 }
 
+// TODO: Now that it got small again we can remove it
 void AsyncServer::MigrationOver(ShardImporter& importer, int shard_id) {
   info_.MigrationOver(shard_id);
   // FIXME: If we crash here the state never gets cleared
   importer.ClearState();
-  // Wait for the confirmation from etcd
-  do {
-    bool ret = info_.WatchNext(call_);
-    assert(!ret);
-  } while (info_.IsMigrating(shard_id));
 }
 
 void AsyncServer::HandleError(const grpc::Status& status, int node_id) {

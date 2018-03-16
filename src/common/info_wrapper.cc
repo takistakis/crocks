@@ -122,17 +122,24 @@ void InfoWrapper::RedistributeShards() {
     assert(pair.second == 0);
 }
 
-std::unordered_map<int, std::vector<int>> InfoWrapper::Tasks(int id) const {
+std::pair<int, int> InfoWrapper::Task(int id) const {
   read_lock lock(mutex_);
-  std::unordered_map<int, std::vector<int>> tasks;
-  assert(id >= 0);
+  // Find the node with the fewer shards
+  auto min = info_.nodes(0);
+  for (const auto& node : info_.nodes())
+    if (!node.remove() && (node.num_shards() < min.num_shards()))
+      min = node;
+  // If the node with the fewer shards is not us, return nothing
+  if (min.id() != id)
+    return std::make_pair(-1, -1);
+  // Else return the first shard we need to request
   int i = 0;
   for (const auto& shard : info_.shards()) {
     if (shard.migrating() && shard.to() == id)
-      tasks[shard.from()].push_back(i);
+      return std::make_pair(shard.from(), i);
     i++;
   }
-  return tasks;
+  return std::make_pair(-1, -1);
 }
 
 void InfoWrapper::GiveShard(int id, int shard_id) {
@@ -148,14 +155,14 @@ void InfoWrapper::GiveShard(int id, int shard_id) {
   assert(shard->to() != id);
   shard->set_master(shard->to());
   pb::NodeInfo* from = info_.mutable_nodes(shard->from());
-  pb::NodeInfo* to = info_.mutable_nodes(shard->to());
   from->set_num_shards(from->num_shards() - 1);
-  to->set_num_shards(to->num_shards() + 1);
 }
 
 void InfoWrapper::MigrationOver(int shard_id) {
   write_lock lock(mutex_);
   pb::ShardInfo* shard = info_.mutable_shards(shard_id);
+  pb::NodeInfo* to = info_.mutable_nodes(shard->to());
+  to->set_num_shards(to->num_shards() + 1);
   shard->set_migrating(false);
   shard->clear_from();
   shard->clear_to();

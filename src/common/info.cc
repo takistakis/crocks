@@ -188,8 +188,8 @@ void Info::WatchEnd(void* call) {
   etcd_.WatchEnd(call);
 }
 
-std::unordered_map<int, std::vector<int>> Info::Tasks() const {
-  return info_.Tasks(id_);
+std::pair<int, int> Info::Task() const {
+  return info_.Task(id_);
 }
 
 void Info::GiveShard(int shard) {

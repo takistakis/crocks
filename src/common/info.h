@@ -122,7 +122,7 @@ class Info {
   void WatchCancel(void* call);
   void WatchEnd(void* call);
 
-  std::unordered_map<int, std::vector<int>> Tasks() const;
+  std::pair<int, int> Task() const;
 
   void GiveShard(int shard);
 
