@@ -2,11 +2,14 @@
 
 A fast, sharded key-value store, based on [RocksDB].
 
+crocks was developed as part of a thesis, and is a proof-of-concept and
+not meant to be used in production.
+
 ## Requirements
 
 The server requires RocksDB version 5.5 or later, and both the server
-and client require [etcd] version 3.2.0 or later for cluster membership
-discovery and coordination.
+and client require [gRPC] version 1.6.x for network communication, and
+[etcd] version 3.2.x for cluster membership discovery and coordination.
 
 ## Quickstart
 
@@ -72,4 +75,5 @@ not found
 Licensed under GPLv3 or any later version.
 
 [RocksDB]: http://www.rocksdb.org
+[gRPC]: https://grpc.io/
 [etcd]: https://coreos.com/etcd
